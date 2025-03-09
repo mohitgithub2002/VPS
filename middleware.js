@@ -15,7 +15,8 @@ const PUBLIC_ROUTES = [
   '/api/auth/forgot-password',
   '/api/auth/verify-otp',
   '/api/auth/reset-password',
-  '/api/auth/resend-otp'
+  '/api/auth/resend-otp',
+  '/api/admin/attendance'
 ]
 
 /**
@@ -70,5 +71,5 @@ export async function middleware(request) {
  * @property {string} matcher - Path pattern for middleware execution
  */
 export const config = {
-  matcher: '/api/:path*',
+  matcher: '/',
 }
