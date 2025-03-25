@@ -6,8 +6,8 @@
 /**
  * OTP schema for authentication and verification purposes
  * @typedef {Object} Otp
- * @property {string} studentId - The ID of the student the OTP is issued to
- * @property {string} rollNumber - Student's roll number for identification
+ * @property {string} authId - The ID from auth_data table
+ * @property {string} mobile - User's mobile number
  * @property {string} otp - Hashed OTP value
  * @property {string} purpose - Purpose of OTP (currently only 'password_reset')
  * @property {Date} expiresAt - Timestamp when the OTP expires
@@ -19,12 +19,12 @@
 import mongoose from 'mongoose';
 
 const otpSchema = new mongoose.Schema({
-  studentId: {
+  authId: {
     type: String,
     required: true,
     index: true
   },
-  rollNumber: {
+  mobile: {
     type: String,
     required: true
   },

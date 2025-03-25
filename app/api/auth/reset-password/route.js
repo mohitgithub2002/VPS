@@ -5,11 +5,11 @@
 
 /**
  * POST /api/auth/reset-password
- * Resets student's password using valid reset token
+ * Resets user's password using valid reset token
  * 
  * @param {Object} req - Next.js API request
  * @param {Object} req.body - Request body
- * @param {string} req.body.rollNumber - Student's roll number
+ * @param {string} req.body.mobile - User's mobile number
  * @param {string} req.body.resetToken - Valid reset token from verify-otp
  * @param {string} req.body.newPassword - New password to set
  * 
@@ -30,7 +30,7 @@ import bcrypt from 'bcryptjs';
 export async function POST(req) {
   try {
     await connectDB();
-    const { rollNumber, resetToken, newPassword } = await req.json();
+    const { mobile, resetToken, newPassword } = await req.json();
 
     const storedToken = await ResetToken.findOne({
       token: resetToken,
@@ -47,9 +47,9 @@ export async function POST(req) {
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     const { error } = await supabase
-      .from('students')
+      .from('auth_data')
       .update({ password: hashedPassword })
-      .eq('id', storedToken.studentId);
+      .eq('auth_id', storedToken.authId);
 
     if (error) {
       throw error;

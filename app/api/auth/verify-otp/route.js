@@ -9,8 +9,8 @@
  * 
  * @param {Object} req - Next.js API request
  * @param {Object} req.body - Request body
- * @param {string} req.body.rollNumber - Student's roll number
- * @param {string} req.body.otp - OTP received by student
+ * @param {string} req.body.mobile - User's mobile number
+ * @param {string} req.body.otp - OTP received by user
  * 
  * @returns {Object} Response object
  * @returns {string} response.status - 'success' or 'error'
@@ -32,10 +32,11 @@ import crypto from 'crypto';
 export async function POST(req) {
   try {
     await connectDB();
-    const { rollNumber, otp } = await req.json();
+    const { mobile, otp } = await req.json();
 
     const storedOTP = await Otp.findOne({
-      rollNumber,
+      mobile,
+      purpose: 'password_reset',
       isUsed: false,
       expiresAt: { $gt: new Date() }
     });
@@ -49,7 +50,7 @@ export async function POST(req) {
 
     const resetToken = crypto.randomBytes(32).toString('hex');
     await ResetToken.create({
-      studentId: storedOTP.studentId,
+      authId: storedOTP.authId,
       token: resetToken,
       expiresAt: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
     });

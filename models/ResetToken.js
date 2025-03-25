@@ -6,7 +6,7 @@
 /**
  * Reset token schema for password reset functionality
  * @typedef {Object} ResetToken
- * @property {string} studentId - The ID of the student requesting password reset
+ * @property {string} authId - The ID from auth_data table
  * @property {string} token - Unique reset token for password reset verification
  * @property {Date} expiresAt - Timestamp when the token expires
  * @property {boolean} isUsed - Flag indicating if the token has been used
@@ -17,7 +17,7 @@
 import mongoose from 'mongoose';
 
 const resetTokenSchema = new mongoose.Schema({
-  studentId: {
+  authId: {
     type: String,
     required: true,
     index: true
