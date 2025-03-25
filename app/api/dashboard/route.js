@@ -38,23 +38,9 @@ export async function GET(req) {
     return unauthorized();
   }
 
-  const userId = auth.user.studentId;
+  const { studentId, enrollmentId, classId } = auth.user;
   
   try {
-    // Fixed start date for attendance tracking
-    // Note: This is a system-wide constant that determines the beginning of attendance records
-    const startDateStr = '2025-04-01';
-
-    // Fetch student's class and section information
-    // This is required for filtering diary entries appropriately
-    const { data: studentData, error: studentError } = await supabase
-      .from('students')
-      .select('class, section')
-      .eq('id', userId)
-      .single();
-    
-    if (studentError) throw studentError;
-
     // Execute multiple queries in parallel for optimal performance
     const [
       announcementsResponse,
@@ -66,44 +52,42 @@ export async function GET(req) {
       // Limited to 3 most recent entries for dashboard display
       supabase
         .from('announcements')
-        .select('*')
+        .select('announcement_id, title, description, date, priority, type')
         .eq('is_active', true)
         .order('date', { ascending: false })
         .limit(3),
 
       // Fetch diary entries with teacher information
-      // Includes both personal entries and broadcast messages for student's class
+      // Includes both personal entries and broadcast messages for student's classroom
       supabase
         .from('diary_entries')
         .select(`
           entry_id,
+          enrollment_id,
           subject,
           content,
           created_at,
           entry_type,
-          class,
-          section,
+          classroom_id,
           teachers:teacher_id (
             name
           )
         `)
-        .or(`user_id.eq.${userId},and(entry_type.eq.Broadcast,class.eq.${studentData.class},section.eq.${studentData.section})`)
+        .or(`enrollment_id.eq.${enrollmentId},and(entry_type.eq.Broadcast,classroom_id.eq.${classId})`)
         .order('created_at', { ascending: false })
         .limit(3),
 
-      // Get aggregated attendance statistics using a database function
-      // This optimizes the calculation by performing it at the database level
+      // Get aggregated attendance statistics using updated database function
       supabase
         .rpc('get_attendance_summary', { 
-          p_user_id: userId,
-          p_start_date: startDateStr
+          p_enrollment_id: enrollmentId
         }),
 
       // Fetch upcoming events
       // Only returns events from today onwards, ordered by date
       supabase
         .from('events')
-        .select('*')
+        .select('event_id, title, description, date, time, location')
         .gte('date', new Date().toISOString().split('T')[0])
         .order('date', { ascending: true })
         .limit(3)
