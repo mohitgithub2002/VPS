@@ -46,8 +46,7 @@ export async function GET(req) {
         status,
         auth_id,
         auth_data!inner (
-          mobile,
-          email
+          mobile
         ),
         student_enrollment!inner (
           enrollment_id,
