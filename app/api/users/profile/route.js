@@ -26,20 +26,47 @@ export async function GET(req) {
     return unauthorized();
   }
 
-  // Extract the authenticated user's ID
-  const userId = auth.user.studentId;
+  const { studentId, enrollmentId } = auth.user;
   
   try {
     // Query the database to retrieve the student's complete profile data
-    // Using Supabase ORM to fetch a single record matching the user ID
-    const { data: student, error } = await supabase
+    // Using Supabase ORM to fetch data from multiple tables
+    const { data: student, error: studentError } = await supabase
       .from('students')
-      .select('*')
-      .eq('id', userId)
+      .select(`
+        student_id,
+        name,
+        date_of_birth,
+        gender,
+        nic_id,
+        email,
+        address,
+        father_name,
+        mother_name,
+        status,
+        auth_id,
+        auth_data!inner (
+          mobile,
+          email
+        ),
+        student_enrollment!inner (
+          enrollment_id,
+          roll_no,
+          classroom_id,
+          classrooms!inner (
+            classroom_id,
+            class,
+            section,
+            medium
+          )
+        )
+      `)
+      .eq('student_id', studentId)
+      .eq('student_enrollment.enrollment_id', enrollmentId)
       .single();
       
     // Throw any database query errors to be caught by the error handler
-    if (error) throw error;
+    if (studentError) throw studentError;
     
     // Format the raw database data into organized sections for the profile screen
     const profile = {
@@ -49,22 +76,23 @@ export async function GET(req) {
         dateOfBirth: student.date_of_birth,
         gender: student.gender,
         nicId: student.nic_id,
-        medium: student.medium,
-        admissionDate: student.admission_date
+        status: student.status
       },
       // Contact information section
       contact: {
-        mobile: student.mobile,
-        email: student.email,
+        mobile: student.auth_data?.mobile,
+        email: student.auth_data?.email || student.email, // Fallback to student email if auth_data email is null
         address: student.address,
         fatherName: student.father_name,
         motherName: student.mother_name
       },
       // Academic information section
       academic: {
-        rollNumber: student.roll_no,
-        class: student.class,
-        section: student.section
+        rollNumber: student.student_enrollment[0]?.roll_no,
+        class: student.student_enrollment[0]?.classrooms?.class,
+        section: student.student_enrollment[0]?.classrooms?.section,
+        medium: student.student_enrollment[0]?.classrooms?.medium,
+        classroomId: student.student_enrollment[0]?.classrooms?.classroom_id
       }
     };
 
