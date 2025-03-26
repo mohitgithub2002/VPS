@@ -46,6 +46,11 @@ export async function POST(req) {
       );
     }
 
+    await Otp.deleteMany({
+      authId: authData.auth_id,
+      isUsed: false,
+    });
+
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     
     await Otp.create({
