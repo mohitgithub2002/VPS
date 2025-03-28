@@ -61,6 +61,7 @@ export async function GET(req) {
           class_id,
           is_temporary,
           valid_upto,
+          schedule,
           sections:class_id (
             id,
             class,
@@ -87,19 +88,15 @@ export async function GET(req) {
       // Add to total count
       totalStudents += studentCount;
       
-      // Generate sample schedule format for demonstration
-      // In a real implementation, this would come from a schedule table
-      const daysOfWeek = ["Mon", "Wed", "Fri"];
-      const sampleTime = "9:00 AM";
-      const scheduleString = `${daysOfWeek.join(", ")}: ${sampleTime}`;
-      
       return {
         id: classData.teacher_class_id,
+        classId: classData.class_id,
+        isTemporary: classData.is_temporary,
         name: `${sectionData.class} ${sectionData.section}`,
         students: studentCount,
         sections: [sectionData.section],
         subject: `${sectionData.medium} Medium`, // Using medium as subject placeholder
-        schedule: scheduleString
+        schedule: classData.schedule || 'No schedule available'
       };
     });
 
