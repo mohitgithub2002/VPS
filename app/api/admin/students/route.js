@@ -6,6 +6,7 @@
 
 import { supabase } from "@/utils/supabaseClient";
 import { NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
 
 /**
  * POST endpoint to create a new student
@@ -17,35 +18,33 @@ export async function POST(req) {
         const data = await req.json();
 
         // Validate required fields
-        if (!data.name || !data.email || !data.mobile || !data.dob || !data.address || !data.rollNo || !data.class || !data.section) {
+        if (!data.name || !data.email || !data.mobile || !data.dob || !data.address || !data.class || !data.section) {
             return NextResponse.json(
                 { error: 'Missing required fields' },
                 { status: 400 }
             );
         }
 
-        // Insert student data
+        // Hash the password using bcrypt
+        const hashedPassword = await bcrypt.hash(data.password, 10);
+
+        // Call register_student RPC function with parameters in the correct order
         const { data: student, error } = await supabase
-            .from('students')
-            .insert([
-                {
-                    roll_no: data.rollNo,
-                    name: data.name,
-                    father_name: data.fatherName,
-                    mother_name: data.motherName,
-                    gender: data.gender,
-                    date_of_birth: data.dob,
-                    email: data.email,
-                    mobile: data.mobile,
-                    password: data.password,
-                    class: data.class,
-                    section: data.section,
-                    address: data.address,
-                    admission_date: data.addmissionDate,
-                    created_at: new Date().toISOString()
-                }
-            ])
-            .select();
+            .rpc('register_student', {
+                p_mobile: data.mobile,
+                p_password: hashedPassword,
+                p_name: data.name,
+                p_father_name: data.fatherName,
+                p_mother_name: data.motherName,
+                p_gender: data.gender,
+                p_date_of_birth: data.dob,
+                p_email: data.email,
+                p_address: data.address,
+                p_class: data.class,
+                p_section: data.section,
+                p_medium: data.medium,
+                p_admission_date: data.addmissionDate
+            });
 
         if (error) {
             return NextResponse.json(
@@ -55,7 +54,7 @@ export async function POST(req) {
         }
 
         return NextResponse.json(
-            { message: 'Student created successfully', student },
+            { message: 'Student registered successfully', student },
             { status: 201 }
         );
 
