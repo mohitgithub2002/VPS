@@ -127,6 +127,7 @@ export async function GET(req) {
     // Process today's attendance
     let presentCount = 0;
     let absentCount = 0;
+    let leaveCount = 0;
     
     if (attendanceTodayResponse.data) {
       attendanceTodayResponse.data.forEach(record => {
@@ -135,10 +136,13 @@ export async function GET(req) {
         } else if (record.status === 'Absent') {
           absentCount++;
         }
+        else if (record.status === 'Leave') {
+          leaveCount++;
+        }
       });
     }
     
-    const totalAttendanceToday = presentCount + absentCount;
+    const totalAttendanceToday = presentCount + absentCount + leaveCount;
     const attendancePercentage = totalAttendanceToday > 0 
       ? Math.round((presentCount / totalAttendanceToday) * 100 * 10) / 10 
       : 0;
