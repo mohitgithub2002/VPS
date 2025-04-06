@@ -77,11 +77,12 @@ export async function POST(req) {
 /**
  * Retrieves all students from the database
  * @param {string} sessionId - Optional session ID to filter students
+ * @param {string} medium - Optional medium to filter students
  * @param {number} page - Page number for pagination
  * @param {number} limit - Number of items per page
  * @returns {Promise<Object>} Supabase query result containing all students
  */
-async function getAllStudents(sessionId, page = 1, limit = 10) {
+async function getAllStudents(sessionId, medium, page = 1, limit = 10) {
     const offset = (page - 1) * limit;
     
     let query = supabase
@@ -121,6 +122,10 @@ async function getAllStudents(sessionId, page = 1, limit = 10) {
     if (sessionId) {
         query = query.eq('student_enrollment.session_id', sessionId);
     }
+    
+    if (medium) {
+        query = query.eq('medium', medium);
+    }
 
     return query.range(offset, offset + limit - 1);
 }
@@ -129,11 +134,12 @@ async function getAllStudents(sessionId, page = 1, limit = 10) {
  * Retrieves students filtered by class
  * @param {string} className - The class name to filter students
  * @param {string} sessionId - The session ID to filter students
+ * @param {string} medium - The medium to filter students
  * @param {number} page - Page number for pagination
  * @param {number} limit - Number of items per page
  * @returns {Promise<Object>} Supabase query result containing filtered students
  */
-async function getStudentsByClass(className, sessionId, page = 1, limit = 20) {
+async function getStudentsByClass(className, sessionId, medium, page = 1, limit = 20) {
     const offset = (page - 1) * limit;
     
     let query = supabase
@@ -174,6 +180,10 @@ async function getStudentsByClass(className, sessionId, page = 1, limit = 20) {
     if (sessionId) {
         query = query.eq('student_enrollment.session_id', sessionId);
     }
+    
+    if (medium) {
+        query = query.eq('medium', medium);
+    }
 
     return query.range(offset, offset + limit - 1);
 }
@@ -183,11 +193,12 @@ async function getStudentsByClass(className, sessionId, page = 1, limit = 20) {
  * @param {string} className - The class name to filter students
  * @param {string} section - The section to filter students
  * @param {string} sessionId - The session ID to filter students
+ * @param {string} medium - The medium to filter students
  * @param {number} page - Page number for pagination
  * @param {number} limit - Number of items per page
  * @returns {Promise<Object>} Supabase query result containing filtered students
  */
-async function getStudentsByClassAndSection(className, section, sessionId, page = 1, limit = 20) {
+async function getStudentsByClassAndSection(className, section, sessionId, medium, page = 1, limit = 20) {
     const offset = (page - 1) * limit;
     
     let query = supabase
@@ -229,6 +240,10 @@ async function getStudentsByClassAndSection(className, section, sessionId, page 
     if (sessionId) {
         query = query.eq('student_enrollment.session_id', sessionId);
     }
+    
+    if (medium) {
+        query = query.eq('medium', medium);
+    }
 
     return query.range(offset, offset + limit - 1);
 }
@@ -238,9 +253,10 @@ async function getStudentsByClassAndSection(className, section, sessionId, page 
  * @param {string} className - The class name to filter student
  * @param {string} rollNo - The roll number of the student
  * @param {string} sessionId - The session ID to filter student
+ * @param {string} medium - The medium to filter student
  * @returns {Promise<Object>} Supabase query result containing single student data
  */
-async function getStudentByClassAndRollNo(className, rollNo, sessionId) {
+async function getStudentByClassAndRollNo(className, rollNo, sessionId, medium) {
     let query = supabase
         .from('students')
         .select(`
@@ -279,6 +295,10 @@ async function getStudentByClassAndRollNo(className, rollNo, sessionId) {
 
     if (sessionId) {
         query = query.eq('student_enrollment.session_id', sessionId);
+    }
+    
+    if (medium) {
+        query = query.eq('medium', medium);
     }
 
     return query.single();
@@ -334,6 +354,7 @@ async function getStudentByRollNo(rollNo) {
  * - section: Filter students by section (requires class parameter)
  * - rollNo: Get specific student by roll number
  * - sessionId: Filter students by academic session ID
+ * - medium: Filter students by medium
  * - page: Page number for pagination
  * - limit: Number of items per page
  * 
@@ -355,6 +376,7 @@ export async function GET(req) {
         const section = searchParams.get('section');
         const rollNo = searchParams.get('rollNo');
         const sessionId = searchParams.get('sessionId');
+        const medium = searchParams.get('medium');
         const page = parseInt(searchParams.get('page') || '1');
         const limit = parseInt(searchParams.get('limit') || '20');
 
@@ -363,7 +385,7 @@ export async function GET(req) {
         // Determine which query to execute based on provided parameters
         if (rollNo) {
             if (className) {
-                result = await getStudentByClassAndRollNo(className, rollNo, sessionId);
+                result = await getStudentByClassAndRollNo(className, rollNo, sessionId, medium);
             } else {
                 result = await getStudentByRollNo(rollNo);
             }
@@ -376,11 +398,11 @@ export async function GET(req) {
                 );
             }
         } else if (className && section) {
-            result = await getStudentsByClassAndSection(className, section, sessionId, page, limit);
+            result = await getStudentsByClassAndSection(className, section, sessionId, medium, page, limit);
         } else if (className) {
-            result = await getStudentsByClass(className, sessionId, page, limit);
+            result = await getStudentsByClass(className, sessionId, medium, page, limit);
         } else {
-            result = await getAllStudents(sessionId, page, limit);
+            result = await getAllStudents(sessionId, medium, page, limit);
         }
 
         const { data, error, count } = result;
@@ -418,7 +440,7 @@ export async function GET(req) {
                     medium: student.medium
                 };
             })
-            : [{
+            : data ? [{
                 id: data.student_id,
                 name: data.name,
                 class: data.student_enrollment[0].classrooms.class,
@@ -434,25 +456,33 @@ export async function GET(req) {
                 status: data.status,
                 admissionDate: data.student_enrollment[0].admission_date,
                 medium: data.medium
-            }];
+            }] : [];
+
+        // Calculate pagination data
+        const total = count || 0;
+        const totalPages = limit > 0 ? Math.ceil(total / limit) : 0;
+        const currentPage = page;
+        const hasNext = currentPage < totalPages;
+        const hasPrev = currentPage > 1;
 
         // Return successful response with student data
         return NextResponse.json({
             success: true,
             data: {
                 students: transformedData,
-                pagination: count ? {
-                    total: count,
-                    pages: Math.ceil(count / limit),
-                    page,
+                pagination: {
+                    total,
+                    pages: totalPages,
+                    page: currentPage,
                     limit,
-                    hasNext: page < Math.ceil(count / limit),
-                    hasPrev: page > 1
-                } : null,
+                    hasNext,
+                    hasPrev
+                },
                 filters: {
                     class: className,
                     section: section,
-                    sessionId: sessionId
+                    sessionId: sessionId,
+                    medium: medium
                 }
             },
             timestamp: new Date().toISOString()
@@ -460,9 +490,27 @@ export async function GET(req) {
 
     } catch (error) {
         // Handle unexpected errors
-        return NextResponse.json(
-            { error: 'Internal Server Error' },
-            { status: 500 }
-        );
+        console.error('Error in GET /api/admin/students:', error);
+        return NextResponse.json({
+            success: false,
+            data: {
+                students: [],
+                pagination: {
+                    total: 0,
+                    pages: 0,
+                    page: 1,
+                    limit: 20,
+                    hasNext: false,
+                    hasPrev: false
+                },
+                filters: {
+                    class: className,
+                    section: section,
+                    sessionId: sessionId,
+                    medium: medium
+                }
+            },
+            timestamp: new Date().toISOString()
+        }, { status: 500 });
     }
 }
