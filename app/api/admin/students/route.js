@@ -51,7 +51,8 @@ export async function POST(req) {
                 p_class: data.class,
                 p_section: data.section,
                 p_medium: data.medium,
-                p_admission_date: data.addmissionDate
+                p_admission_date: data.addmissionDate || new Date().toISOString().split('T')[0]
+                
             });
 
         if (error) {
