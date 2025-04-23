@@ -111,7 +111,7 @@ export async function PUT(req, { params }) {
       errors.push({ field: 'priority', message: 'Priority must be one of: High, Medium, Low' });
     }
     
-    if (body.type !== undefined && !['Event', 'Meeting', 'Update', 'Information'].includes(body.type)) {
+    if (body.type !== undefined && !['event', 'notice', 'reminder', 'news','calendar'].includes(body.type)) {
       errors.push({ field: 'type', message: 'Type must be one of: Event, Meeting, Update, Information' });
     }
     
