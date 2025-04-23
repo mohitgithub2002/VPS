@@ -242,7 +242,7 @@ export async function POST(req) {
       description: data[0].description,
       date: data[0].date,
       priority: data[0].priority,
-      type: data[0].type === 'notice' ? 'Information' : data[0].type,
+      type: data[0].type,
       isActive: data[0].is_active
     };
 
