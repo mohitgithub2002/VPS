@@ -160,7 +160,7 @@ export async function PUT(req, { params }) {
     if (body.date !== undefined) updateData.date = body.date;
     if (body.priority !== undefined) updateData.priority = body.priority.toLowerCase();
     if (body.type !== undefined) {
-      updateData.type = body.type === 'Information' ? 'notice' : body.type.toLowerCase();
+      updateData.type = body.type;
     }
     if (body.isActive !== undefined) updateData.is_active = body.isActive;
     
@@ -180,7 +180,7 @@ export async function PUT(req, { params }) {
       description: data[0].description,
       date: data[0].date,
       priority: data[0].priority,
-      type: data[0].type === 'notice' ? 'Information' : data[0].type,
+      type: data[0].type,
       isActive: data[0].is_active
     };
     

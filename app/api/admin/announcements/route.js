@@ -111,7 +111,7 @@ export async function GET(req) {
       description: announcement.description,
       date: announcement.date,
       priority: announcement.priority,
-      type: announcement.type === 'notice' ? 'Information' : announcement.type,
+      type: announcement.type,
       isActive: announcement.is_active
     }));
     
