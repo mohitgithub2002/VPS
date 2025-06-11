@@ -45,48 +45,36 @@ export async function POST(req) {
   const userId = auth.user.studentId;
   
   try {
-    // Parse request body to get password values
-    const { currentPassword, newPassword } = await req.json();
+    // Parse request body to get new password
+    const { newPassword } = await req.json();
     
-    // Validate that both passwords are provided
-    if (!currentPassword || !newPassword) {
+    // Validate that newPassword is provided
+    if (!newPassword) {
       return NextResponse.json(
-        { success: false, message: 'Both current and new passwords are required' },
+        { success: false, message: 'New password is required' },
         { status: 400 }
       );
     }
-    
-    // Retrieve the user's current hashed password from database
-    const { data: student, error: fetchError } = await supabase
+    // Fetch student's auth_id from students table
+    const { data: student, error: studentError } = await supabase
       .from('students')
-      .select('password')
-      .eq('id', userId)
+      .select('auth_id')
+      .eq('student_id', userId)
       .single();
-      
-    if (fetchError) throw fetchError;
-    
-    // Verify that the provided current password matches the stored hash
-    const isPasswordValid = await bcrypt.compare(currentPassword, student.password);
-    
-    if (!isPasswordValid) {
+    if (studentError || !student || !student.auth_id) {
       return NextResponse.json(
-        { success: false, message: 'Current password is incorrect' },
-        { status: 401 }
+        { success: false, message: 'Student or authentication data not found' },
+        { status: 404 }
       );
     }
-    
     // Generate a new hash for the new password using bcrypt
-    // Salt rounds of 10 provides a good balance of security and performance
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
-    // Update the user's password in the database with the new hash
+    // Update the password in auth_data table
     const { error: updateError } = await supabase
-      .from('students')
+      .from('auth_data')
       .update({ password: hashedPassword })
-      .eq('id', userId);
-      
+      .eq('auth_id', student.auth_id);
     if (updateError) throw updateError;
-
     // Return success response
     return NextResponse.json({
       success: true,
