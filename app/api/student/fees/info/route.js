@@ -109,7 +109,7 @@ export async function GET(req) {
         status,
         installmentNo: inst.installment_no,
       };
-    });
+    }).filter(inst => inst.due > 0);
 
     // 4. Sort and paginate
     allInstallments.sort((a, b) => {
