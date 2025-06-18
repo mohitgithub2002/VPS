@@ -9,14 +9,14 @@ export async function GET(req, { params }) {
     return NextResponse.json({ success: false, message: 'Access denied. User is not a teacher.' }, { status: 403 });
   }
   const teacherId = auth.user.teacherId;
-  const { examId } = params;
+  const { examId } = await params;
   if (!examId) return NextResponse.json({ success: false, message: 'Missing examId' }, { status: 400 });
 
   try {
     // Fetch exam and classroom to authorise access
     const { data: exam, error: examErr } = await supabase
       .from('exam')
-      .select('exam_id, name, start_date, classroom_id, is_declared')
+      .select('exam_id, start_date, classroom_id, is_declared, exam_type:exam_type_id(name)', { count: 'exact' })
       .eq('exam_id', examId)
       .maybeSingle();
     if (examErr) throw examErr;
@@ -31,35 +31,57 @@ export async function GET(req, { params }) {
       .maybeSingle();
     if (!tc) return NextResponse.json({ success: false, message: 'You are not assigned to this class' }, { status: 403 });
 
-    // Fetch all summaries for this exam
-    const { data: summaries, error: sumErr } = await supabase
-      .from('exam_summary')
-      .select('enrollment_id, total_marks, percentage, rank, grade, max_marks')
-      .eq('exam_id', examId);
+    // Fetch summaries and all class enrollments in parallel
+    const [{ data: summaries, error: sumErr }, { data: allEnrollments, error: enrollErr }] = await Promise.all([
+      supabase
+        .from('exam_summary')
+        .select('enrollment_id, total_marks, percentage, rank, grade, max_marks')
+        .eq('exam_id', examId),
+      supabase
+        .from('student_enrollment')
+        .select('enrollment_id, roll_no, students(student_id, name)')
+        .eq('classroom_id', exam.classroom_id)
+    ]);
     if (sumErr) throw sumErr;
+    if (enrollErr) throw enrollErr;
 
     if (!summaries || summaries.length === 0) {
-      return NextResponse.json({ success: true, data: { exam: null, students: [] } });
+      // still include absent students list
+      const studentsAbsent = (allEnrollments || []).map(e => ({
+        rank: null,
+        studentId: e.students?.student_id,
+        rollNo: String(e.roll_no).padStart(4, '0'),
+        name: e.students?.name,
+        totalMarks: null,
+        maxMarks: null,
+        percentage: null,
+        grade: null,
+        absent: true
+      }));
+      return NextResponse.json({ success: true, data: { exam: {
+        id: exam.exam_id,
+        title: exam.exam_type?.name || `Exam #${exam.exam_id}`,
+        date: exam.start_date,
+        isCompleted: !!exam.is_declared,
+        averageMarks: null,
+        highestMarks: null
+      }, students: studentsAbsent } });
     }
 
-    // Map enrollments to student info
     const enrollmentIds = summaries.map(s => s.enrollment_id);
-    const { data: enrollmentRows } = await supabase
-      .from('student_enrollment')
-      .select('enrollment_id, roll_no, students(student_id, name)')
-      .in('enrollment_id', enrollmentIds);
 
+    // Build quick maps
     const infoMap = {};
-    (enrollmentRows || []).forEach(er => {
-      infoMap[er.enrollment_id] = {
-        studentId: er.students?.student_id,
-        name: er.students?.name,
-        rollNo: er.roll_no
+    (allEnrollments || []).forEach(e => {
+      infoMap[e.enrollment_id] = {
+        studentId: e.students?.student_id,
+        name: e.students?.name,
+        rollNo: e.roll_no
       };
     });
 
-    // Compose students array
-    const students = summaries.map(s => {
+    // Students who have summary rows (present)
+    const rankedStudents = summaries.map(s => {
       const info = infoMap[s.enrollment_id] || {};
       return {
         rank: s.rank,
@@ -69,18 +91,42 @@ export async function GET(req, { params }) {
         totalMarks: Number(s.total_marks),
         maxMarks: Number(s.max_marks),
         percentage: Number(s.percentage),
-        grade: s.grade
+        grade: s.grade,
+        absent: false
       };
     }).sort((a, b) => a.rank - b.rank);
 
+    // Absent students
+    const absentStudents = (allEnrollments || [])
+      .filter(e => !enrollmentIds.includes(e.enrollment_id))
+      .map(e => ({
+        rank: null,
+        studentId: e.students?.student_id,
+        rollNo: String(e.roll_no).padStart(4, '0'),
+        name: e.students?.name,
+        totalMarks: null,
+        maxMarks: null,
+        percentage: null,
+        grade: null,
+        absent: true
+      }));
+
+    const students = [...rankedStudents, ...absentStudents];
+
+    // Compute averages / highest
+    const totalMarksArr = summaries.map(r => Number(r.total_marks));
+    const averageMarks = totalMarksArr.length ? Number((totalMarksArr.reduce((a,b)=>a+b,0) / totalMarksArr.length).toFixed(2)) : null;
+    const highestMarks = totalMarksArr.length ? Math.max(...totalMarksArr) : null;
+
     const examSummary = {
       id: exam.exam_id,
-      title: exam.name || `Exam #${exam.exam_id}`,
-      subject: null,
+      title: exam.exam_type?.name || `Exam #${exam.exam_id}`,
       date: exam.start_date,
       totalStudents: students.length,
       gradedStudents: students.length,
-      isCompleted: !!exam.is_declared
+      isCompleted: !!exam.is_declared,
+      averageMarks,
+      highestMarks
     };
 
     return NextResponse.json({ success: true, data: { exam: examSummary, students } });

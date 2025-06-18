@@ -77,7 +77,7 @@ export async function GET(req) {
   try {
     let examQuery = supabase
       .from('exam')
-      .select('*', { count: 'exact' })
+      .select(`exam_id, start_date, is_declared, exam_type:exam_type_id(name)`, { count: 'exact' })
       .eq('classroom_id', classId)
       .order('start_date', { ascending: false });
 
@@ -106,20 +106,22 @@ export async function GET(req) {
     // -----------------------------------------------------------------------
     // 6. Fetch supporting data in parallel – summary + student counts
     // -----------------------------------------------------------------------
-    const [{ data: summaries }, { data: enrollmentCountData }] = await Promise.all([
+    const [{ data: summaries }] = await Promise.all([
       // 6a. Get all exam_summary rows for these exams (for metrics)
       supabase.from('exam_summary')
         .select('*')
-        .in('exam_id', examIds),
-      // 6b. Total students in the class (for pass-rate / totalStudents)
-      supabase.from('student_enrollment')
-        .select('enrollment_id', { count: 'exact', head: true })
-        .eq('classroom_id', classId)
+        .in('exam_id', examIds)
     ]);
-    console.log(summaries);
-    console.log(enrollmentCountData);
 
-    const totalStudentsInClass = enrollmentCountData?.count ?? 0;
+    // Fetch classroom details once (single query) – used for all response items
+    const { data: classroomData, error: clsErr } = await supabase
+      .from('classrooms')
+      .select('class, section')
+      .eq('classroom_id', classId)
+      .maybeSingle();
+    if (clsErr) throw clsErr;
+    const className = classroomData?.class ?? null;
+    const sectionName = classroomData?.section ?? null;
 
     // Group summaries by exam_id for quick access
     const byExam = {};
@@ -133,29 +135,23 @@ export async function GET(req) {
     // -----------------------------------------------------------------------
     const items = exams.map(exam => {
       const stats = byExam[exam.exam_id] || [];
-      const gradedStudents = stats.length;
       // Aggregate calculations
-      let averageMarks, highestMarks, passRate;
+      let averageMarks, highestMarks;
       if (exam.is_declared && stats.length > 0) {
         const totalMarksArr = stats.map(r => Number(r.total_marks));
-        const percentages = stats.map(r => Number(r.percentage));
         averageMarks = Number((totalMarksArr.reduce((a, b) => a + b, 0) / stats.length).toFixed(2));
         highestMarks = Math.max(...totalMarksArr);
-        const passed = stats.filter(r => (r.grade ?? '').toUpperCase() !== 'F').length;
-        passRate = totalStudentsInClass > 0 ? Number(((passed / totalStudentsInClass) * 100).toFixed(2)) : null;
       }
 
       return {
         id: exam.exam_id,
-        title: exam.name || `Exam #${exam.exam_id}`,
-        subject: null, // Not directly available in schema (exam spans multiple subjects)
+        title: exam.exam_type?.name || `Exam #${exam.exam_id}`,
+        class: className,
+        section: sectionName,
         date: exam.start_date,
-        totalStudents: totalStudentsInClass,
-        gradedStudents,
         isCompleted: !!exam.is_declared,
         averageMarks,
-        highestMarks,
-        passRate
+        highestMarks
       };
     });
 
