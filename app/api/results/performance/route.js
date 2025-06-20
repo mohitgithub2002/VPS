@@ -31,8 +31,24 @@ export async function GET(req) {
       .select('exam_id, enrollment_id, total_marks, percentage, rank, grade, updated_at, exam:exam_id(exam_type:exam_type_id(code))')
       .in('enrollment_id', enrollmentIds)
       .order('updated_at', { ascending: false });
-    if (summariesError || !summaries || summaries.length === 0) {
-      return NextResponse.json({ success: false, message: 'No exam summaries found' }, { status: 404 });
+    if (summariesError) {
+      return NextResponse.json({ success: false, message: 'Failed to fetch exam summaries' }, { status: 500 });
+    }
+
+    if (!summaries || summaries.length === 0) {
+      return NextResponse.json(
+        {
+          success: true,
+          data: {
+            overall: 0,
+            rank: null,
+            lastExam: null,
+            subjects: {},
+            recentTrend: []
+          }
+        },
+        { status: 200 }
+      );
     }
 
     // 3. Calculate overall percentage (average of all percentages)
