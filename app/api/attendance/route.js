@@ -192,8 +192,67 @@ export async function GET(req) {
       attendanceArray.push({ date: dateStr, status, remark });
     }
 
-    const totalWorkingDays = attendanceArray.length - countHoliday;
-    const attendancePercentage = totalWorkingDays > 0 ? parseFloat(((countPresent / totalWorkingDays) * 100).toFixed(2)) : 0;
+    // ---------------------- SESSION-WIDE SUMMARY ----------------------
+    // Determine academic session window (1 Apr YYYY → 31 Mar YYYY+1)
+    const todayDate = new Date();
+    const sessionYear = (todayDate.getMonth() + 1) >= 4 ? todayDate.getFullYear() : todayDate.getFullYear() - 1;
+    const sessionStartDateObj = new Date(`${sessionYear}-04-01`);
+    const sessionEndFullObj  = new Date(`${sessionYear + 1}-03-31`);
+    const sessionEndDateObj  = todayDate < sessionEndFullObj ? todayDate : sessionEndFullObj;
+
+    const sessionStartISO = sessionStartDateObj.toISOString().split('T')[0];
+    const sessionEndISO   = sessionEndDateObj.toISOString().split('T')[0];
+
+    // Fetch all attendance records within the session window
+    const { data: sessionAttendance, error: sessionAttErr } = await supabase
+      .from('attendance')
+      .select('date, status')
+      .eq('enrollment_id', enrollment.enrollment_id)
+      .gte('date', sessionStartISO)
+      .lte('date', sessionEndISO);
+    if (sessionAttErr) throw sessionAttErr;
+
+    // Fetch all holidays that overlap the session window
+    const { data: sessionHolidays, error: sessionHolErr } = await supabase
+      .from('holiday')
+      .select('start_date, end_date')
+      .lte('start_date', sessionEndISO)
+      .gte('end_date', sessionStartISO);
+    if (sessionHolErr) throw sessionHolErr;
+
+    // Build lookup maps
+    const sessionAttMap = new Map();
+    sessionAttendance?.forEach(r => sessionAttMap.set(r.date, r.status.toLowerCase()));
+
+    const sessionHolSet = new Set();
+    sessionHolidays?.forEach(h => {
+      const s = new Date(h.start_date);
+      const e = new Date(h.end_date);
+      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+        sessionHolSet.add(d.toISOString().split('T')[0]);
+      }
+    });
+
+    // Iterate through each calendar day of the session
+    let sPresent = 0, sAbsent = 0, sLeave = 0, sHoliday = 0;
+    for (let d = new Date(sessionStartDateObj); d <= sessionEndDateObj; d.setDate(d.getDate() + 1)) {
+      const iso = d.toISOString().split('T')[0];
+      const dow = d.getDay(); // Sunday = 0
+
+      if (sessionAttMap.has(iso)) {
+        const st = sessionAttMap.get(iso);
+        if (st === 'present') sPresent++;
+        else if (st === 'absent') sAbsent++;
+        else if (st === 'leave')  sLeave++;
+      } else if (dow === 0 || sessionHolSet.has(iso)) {
+        sHoliday++;
+      }
+    }
+
+    const sessionWorkingDays = sPresent + sAbsent + sLeave; // as requested
+    const sessionAttendancePercentage = sessionWorkingDays > 0
+      ? parseFloat(((sPresent / sessionWorkingDays) * 100).toFixed(2))
+      : 0;
 
     // 7. Compose response
     const responseData = {
@@ -211,12 +270,14 @@ export async function GET(req) {
       },
       attendance: attendanceArray,
       summary: {
-        totalWorkingDays,
-        present: countPresent,
-        absent: countAbsent,
-        leave: countLeave,
-        holiday: countHoliday,
-        attendancePercentage,
+        sessionStart: sessionStartISO,
+        sessionEnd: sessionEndISO,
+        totalWorkingDays: sessionWorkingDays,
+        present: sPresent,
+        absent: sAbsent,
+        leave: sLeave,
+        holiday: sHoliday,
+        attendancePercentage: sessionAttendancePercentage,
       },
     };
 
