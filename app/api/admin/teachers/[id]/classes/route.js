@@ -13,6 +13,16 @@ const classAssignmentSchema = z.object({
   })),
 });
 
+// Schema for removing class assignments
+const removeAssignmentSchema = z.object({
+  // Accept either a single class_id or an array of class_ids
+  class_id: z.number().optional(),
+  class_ids: z.array(z.number()).optional(),
+}).refine(data => data.class_id || (data.class_ids && data.class_ids.length), {
+  message: 'Either class_id or class_ids must be provided',
+  path: ['class_id'],
+});
+
 // Helper function to format response
 const formatResponse = (data, success = true) => {
   return NextResponse.json({
@@ -78,5 +88,50 @@ export async function POST(request, { params }) {
       return formatError('VALIDATION_ERROR', 'Invalid input data', error.flatten());
     }
     return formatError('INTERNAL_ERROR', 'Failed to assign classes');
+  }
+}
+
+// DELETE /api/admin/teachers/[id]/classes - Remove class assignments from teacher
+export async function DELETE(request, { params }) {
+  // Authenticate the incoming request
+  const auth = await authenticateAdmin(request);
+
+  if (!auth.authenticated) {
+    return unauthorized();
+  }
+
+  try {
+    const { id } = await params;
+    const teacherId = parseInt(id);
+    const body = await request.json();
+
+    // Validate request body
+    const validatedData = removeAssignmentSchema.parse(body);
+    const classIds = validatedData.class_ids ?? [validatedData.class_id];
+
+    // Delete assignments
+    const { data: deletedAssignments, error } = await supabase
+      .from('teacher_class')
+      .delete()
+      .eq('teacher_id', teacherId)
+      .in('class_id', classIds)
+      .select();
+
+    if (error) throw error;
+
+    if (!deletedAssignments || deletedAssignments.length === 0) {
+      return formatError('NOT_FOUND', 'No matching class assignments found');
+    }
+
+    return formatResponse({
+      teacher_id: teacherId,
+      message: 'Class assignments removed successfully',
+      removed_assignments: deletedAssignments,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return formatError('VALIDATION_ERROR', 'Invalid input data', error.flatten());
+    }
+    return formatError('INTERNAL_ERROR', 'Failed to remove class assignments');
   }
 } 
