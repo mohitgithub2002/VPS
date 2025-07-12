@@ -30,8 +30,8 @@ export async function GET(req) {
     const paymentModes = [...new Set((methodData || []).map((m) => m.method))];
 
     // Fetch fee types (category names)
-    const { data: feeTypesData } = await supabase.from("fee_category").select("name").order("name");
-    const feeTypes = (feeTypesData || []).map((f) => f.name);
+    const { data: feeTypesData } = await supabase.from("fee_category").select("*").order("category_id");
+    const feeTypes = feeTypesData;
 
     // For paymentGateways we currently do not have a dedicated column, reuse paymentModes
     const paymentGateways = paymentModes;
