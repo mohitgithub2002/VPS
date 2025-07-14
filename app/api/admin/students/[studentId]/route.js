@@ -406,6 +406,9 @@ export async function PUT(req, { params }) {
       
       if (body.section) classroomQuery = classroomQuery.eq('section', body.section);
       else classroomQuery = classroomQuery.eq('section', enrollment.classrooms.section);
+
+      if (body.medium) classroomQuery = classroomQuery.eq('medium', body.medium);
+      else classroomQuery = classroomQuery.eq('medium', enrollment.classrooms.medium);
       
       classroomQuery = classroomQuery.eq('session_id', currentSession.session_id);
       
