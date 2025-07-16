@@ -48,6 +48,7 @@ export async function GET(req) {
       .from('daily_test')
       .select('*', { count: 'exact' })
       .eq('classroom_id', classId)
+      .eq('created_by', teacherId)
       .order('test_date', { ascending: false });
 
     // Simple status filter: upcoming => test_date > today; past => test_date <= today

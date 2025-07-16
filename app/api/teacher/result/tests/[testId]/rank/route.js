@@ -21,7 +21,7 @@ export async function GET(req, { params }) {
     return NextResponse.json({ success: false, message: 'Access denied. User is not a teacher.' }, { status: 403 });
   }
   const teacherId = auth.user.teacherId;
-  const { testId } = params;
+  const { testId } = await params;
   if (!testId) return NextResponse.json({ success: false, message: 'Missing testId' }, { status: 400 });
 
   try {
@@ -88,7 +88,7 @@ export async function GET(req, { params }) {
     let prevMarks = null;
     students.forEach((s, idx) => {
       if (prevMarks === null || s.marks !== prevMarks) {
-        rank = idx + 1;
+        rank = rank + 1;
         prevMarks = s.marks;
       }
       s.rank = rank;
