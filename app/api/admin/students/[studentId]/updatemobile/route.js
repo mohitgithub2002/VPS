@@ -109,22 +109,24 @@ export async function PUT(req, { params }) {
                 throw updateError;
             }
         } else {
-            // Update the existing auth_id's mobile number
-            const { error: updateAuthError } = await supabase
+            // Create a new auth_id with the new mobile number
+            const { data: newAuthData, error: createAuthError } = await supabase
                 .from('auth_data')
-                .update({
+                .insert({
                     mobile: body.mobile
                 })
-                .eq('auth_id', existingStudent.auth_id);
+                .select('auth_id')
+                .single();
 
-            if (updateAuthError) {
-                throw updateAuthError;
+            if (createAuthError) {
+                throw createAuthError;
             }
 
-            // Update student's mobile number
+            // Update student record with new auth_id and mobile
             const { error: updateStudentError } = await supabase
                 .from('students')
                 .update({
+                    auth_id: newAuthData.auth_id,
                     mobile: body.mobile
                 })
                 .eq('student_id', studentId);
