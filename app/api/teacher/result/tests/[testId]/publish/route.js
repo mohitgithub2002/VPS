@@ -34,16 +34,6 @@ export async function PUT(req, { params }) {
       .maybeSingle();
     if (!tc) return NextResponse.json({ success: false, message: 'You are not assigned to this class' }, { status: 403 });
 
-    // Ensure all marks filled
-    const { data: pending } = await supabase
-      .from('daily_test_mark')
-      .select('test_mark_id', { count: 'exact', head: true })
-      .eq('test_id', testId)
-      .is('marks_obtained', null);
-    if (pending?.count > 0) {
-      return NextResponse.json({ success: false, message: 'Not all student marks have been filled' }, { status: 400 });
-    }
-
     // Update is_declared
     const now = new Date().toISOString();
     const { error: updErr } = await supabase
