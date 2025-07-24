@@ -1,6 +1,15 @@
 // app/api/devices/route.js
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
+import admin from 'firebase-admin';
+
+// Initialize Firebase Admin if not already done
+if (!admin.apps.length) {
+  const serviceAccount = JSON.parse(process.env.FCM_SERVICE_ACCOUNT_JSON || '{}');
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+}
 
 // POST to register a token
 export async function POST(req) {
@@ -21,6 +30,17 @@ export async function POST(req) {
     // Upsert to prevent duplicates
     const { error } = await supabase.from('device_tokens').upsert(row, { onConflict: 'token' });
     if (error) throw error;
+
+    // Subscribe to FCM topic for broadcast messages
+    try {
+      const topicName = role + 's'; // 'students', 'teachers'
+      await admin.messaging().subscribeToTopic([token], topicName);
+      console.log(`Subscribed ${role} to topic: ${topicName}`);
+    } catch (topicErr) {
+      console.error('Topic subscription failed', topicErr);
+      // Don't fail the request if topic subscription fails
+    }
+
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error('Device register error', err);
@@ -34,6 +54,16 @@ export async function DELETE(req) {
     const { searchParams } = new URL(req.url);
     const token = searchParams.get('token');
     if (!token) return NextResponse.json({ success: false, message: 'token query param required' }, { status: 400 });
+
+    // Unsubscribe from all topics before deleting
+    try {
+      await admin.messaging().unsubscribeFromTopic([token], 'students');
+      await admin.messaging().unsubscribeFromTopic([token], 'teachers');
+      await admin.messaging().unsubscribeFromTopic([token], 'admins');
+    } catch (topicErr) {
+      console.error('Topic unsubscription failed', topicErr);
+    }
+
     const { error } = await supabase.from('device_tokens').delete().eq('token', token);
     if (error) throw error;
     return NextResponse.json({ success: true });
