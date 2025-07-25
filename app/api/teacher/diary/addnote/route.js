@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateUser, unauthorized } from '@/lib/auth';
+import { createAndSend } from '@/lib/notifications/index.js';
 
 export async function POST(req) {
   // Authenticate teacher (make sure this is implemented in lib/auth.js)
@@ -63,6 +64,57 @@ export async function POST(req) {
       .select();
 
     if (error) throw error;
+
+    // --- Fire-and-Forget Notification Dispatch ---
+    const dispatchNotifications = async () => {
+      try {
+        let recipients = [];
+
+        if (entryType === 'Personal') {
+          // For personal notes, find the single student's ID
+          const { data: student, error: studentErr } = await supabase
+            .from('student_enrollment')
+            .select('student_id')
+            .eq('enrollment_id', enrollmentId)
+            .maybeSingle();
+
+          if (studentErr) throw studentErr;
+
+          if (student) {
+            recipients.push({ role: 'student', id: student.student_id });
+          }
+        } else if (entryType === 'Broadcast') {
+          // For broadcast notes, find all students in the class
+          const { data: students, error: studentsErr } = await supabase
+            .from('student_enrollment')
+            .select('student_id')
+            .eq('classroom_id', classroomId); // Assuming you want all students in the class
+
+          if (studentsErr) throw studentsErr;
+          
+          recipients = students.map(s => ({ role: 'student', id: s.student_id }));
+        }
+
+        if (recipients.length > 0) {
+          await createAndSend({
+            type: 'diary_note',
+            title: `New Diary Note in ${subject}`,
+            body: content,
+            recipients,
+            data: {
+              "screen": "Home",
+              "params": { "classroomId": classroomId }
+            }
+          });
+          console.log(`Dispatched diary note notification to ${recipients.length} recipient(s).`);
+        }
+      } catch (err) {
+        console.error('Failed to dispatch diary note notification:', err);
+      }
+    };
+
+    // Run in the background
+    dispatchNotifications();
 
     return NextResponse.json({
       success: true,
