@@ -25,6 +25,12 @@ export async function GET(req) {
 
   const column = 'recipient_id';
   const roleType = user.studentId ? 'student' : (user.teacherId ? 'teacher' : 'admin');
+  // Handle plural topic names (students, teachers) and global ('all') broadcasts
+  const recipientTypes = [roleType];
+  if (roleType === 'student') recipientTypes.push('students');
+  if (roleType === 'teacher') recipientTypes.push('teachers');
+  if (roleType === 'admin') recipientTypes.push('admins');
+  recipientTypes.push('all');
 
   const { searchParams } = new URL(req.url);
   const page = parseInt(searchParams.get('page') || '1', 10);
@@ -35,7 +41,7 @@ export async function GET(req) {
   // Fetch both personal and broadcast (recipient_id = 'ALL') notifications
   let query = supabase.from('notifications').select('*', { count: 'exact' })
     .in(column, [String(idValue), 'ALL'])
-    .eq('recipient_type', roleType)
+    .in('recipient_type', recipientTypes)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
