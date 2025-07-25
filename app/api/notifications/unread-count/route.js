@@ -17,9 +17,8 @@ export async function GET(req) {
   const { count, error } = await supabase
     .from('notifications')
     .select('*', { count: 'exact', head: true })
-    .eq(column, String(idValue))
+    .in(column, [String(idValue), 'ALL']) // Include 'ALL' for broadcast notifications  
     .eq('recipient_type', roleType)
-    .eq('status', 'sent')
     .is('read_at', null);
 
   if (error) {

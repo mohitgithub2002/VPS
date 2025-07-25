@@ -32,10 +32,10 @@ export async function GET(req) {
   const statusFilter = searchParams.get('status') || 'all';
   const offset = (page - 1) * limit;
 
+  // Fetch both personal and broadcast (recipient_id = 'ALL') notifications
   let query = supabase.from('notifications').select('*', { count: 'exact' })
-    .eq(column, String(idValue))
+    .in(column, [String(idValue), 'ALL'])
     .eq('recipient_type', roleType)
-    .eq('status', 'sent')
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 

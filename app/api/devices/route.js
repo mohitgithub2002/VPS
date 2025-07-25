@@ -19,6 +19,44 @@ export async function POST(req) {
       return NextResponse.json({ success: false, message: 'Missing fields' }, { status: 400 });
     }
 
+    // Check if token already exists and get current role
+    const { data: existingToken, error: fetchError } = await supabase
+      .from('device_tokens')
+      .select('recipient_type, recipient_id')
+      .eq('token', token)
+      .single();
+
+    if (fetchError && fetchError.code !== 'PGRST116') {
+      // PGRST116 is "not found" error, which is fine for new tokens
+      throw fetchError;
+    }
+
+    // Handle topic subscriptions
+    try {
+      const newTopicName = role + 's'; // 'students', 'teachers', 'admins'
+      
+      if (existingToken) {
+        const oldRole = existingToken.recipient_type;
+        const oldUserId = existingToken.recipient_id;
+        
+        // If role changed or user changed, unsubscribe from old topic
+        if (oldRole !== role || oldUserId !== String(userId)) {
+          const oldTopicName = oldRole + 's';
+          console.log(`Unsubscribing from old topic: ${oldTopicName} for role change`);
+          await admin.messaging().unsubscribeFromTopic([token], oldTopicName);
+        }
+      }
+      
+      // Subscribe to new topic
+      console.log(`Subscribing ${role} (userId: ${userId}) to topic: ${newTopicName}`);
+      await admin.messaging().subscribeToTopic([token], newTopicName);
+      
+    } catch (topicErr) {
+      console.error('Topic subscription management failed', topicErr);
+      // Don't fail the request if topic subscription fails
+    }
+
+    // Prepare data for upsert
     const row = {
       token,
       platform,
@@ -30,16 +68,6 @@ export async function POST(req) {
     // Upsert to prevent duplicates
     const { error } = await supabase.from('device_tokens').upsert(row, { onConflict: 'token' });
     if (error) throw error;
-
-    // Subscribe to FCM topic for broadcast messages
-    try {
-      const topicName = role + 's'; // 'students', 'teachers'
-      await admin.messaging().subscribeToTopic([token], topicName);
-      console.log(`Subscribed ${role} to topic: ${topicName}`);
-    } catch (topicErr) {
-      console.error('Topic subscription failed', topicErr);
-      // Don't fail the request if topic subscription fails
-    }
 
     return NextResponse.json({ success: true });
   } catch (err) {
