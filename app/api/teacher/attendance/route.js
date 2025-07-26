@@ -29,6 +29,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateUser, unauthorized } from '@/lib/auth';
+import { createAndSend } from '@/lib/notifications/index.js';
 
 export async function POST(req) {
   // Authenticate teacher
@@ -109,6 +110,47 @@ export async function POST(req) {
       `);
 
     if (error) throw error;
+
+    // --- Fire-and-Forget Notification Dispatch ---
+    const dispatchNotifications = async () => {
+      const notificationPromises = insertedRecords.map(record => {
+        const studentId = record.student_enrollment?.students?.student_id;
+        const studentName = record.student_enrollment?.students?.name;
+        if (!studentId) return null; // Skip if student mapping failed
+
+        const status = record.status;
+        const formattedDate = new Date(date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+        let body = `Your attendance for ${formattedDate} has been marked as ${status}.`;
+
+        if (status === 'Absent') {
+          body = `${studentName} was marked Absent on ${formattedDate}. Please contact your teacher if this is incorrect.`;
+        } else if (status === 'Present') {
+          body = `${studentName} was marked Present on ${formattedDate}.`;
+        } else if (status === 'Leave') {
+          body = `${studentName}'s leave for ${formattedDate} has been approved.`;
+        }
+
+        return createAndSend({
+          type: 'attendance',
+          title: 'Attendance Update',
+          body: body,
+          recipients: [{ role: 'student', id: studentId }],
+          data: {
+            "screen": "AttendanceView",
+            "params": { "date": date }
+          }
+        }).catch(err => {
+          console.error(`Failed to send attendance notification to student ${studentId}:`, err);
+        });
+      });
+
+      // Filter out any null promises and wait for all to complete
+      await Promise.all(notificationPromises.filter(p => p));
+      console.log(`Finished sending ${insertedRecords.length} attendance notifications in the background for date ${date}.`);
+    };
+
+    // Don't await, run this in the background for a fast API response
+    dispatchNotifications();
 
     // Format the response data
     const formattedRecords = insertedRecords.map(record => ({

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
+import { createAndSend } from '@/lib/notifications/index.js';
 import { authenticateUser, unauthorized } from '@/lib/auth';
 
 /**
@@ -245,6 +246,20 @@ export async function POST(req) {
       type: data[0].type,
       isActive: data[0].is_active
     };
+
+    // Trigger push notification to every student
+    try {
+      await createAndSend({
+        type: 'announcement',
+        title: createdAnnouncement.title,
+        body: createdAnnouncement.description,
+        recipients: [{ role: 'all', id: 'ALL' }],
+        data: { "screen": "Announcements", "params": { "announcementId": createdAnnouncement.id } }
+      });
+    } catch (notifyErr) {
+      console.error('Failed to dispatch announcement notification', notifyErr);
+      // Proceed without failing the API response
+    }
 
     return NextResponse.json({
       success: true,
