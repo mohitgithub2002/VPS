@@ -86,7 +86,7 @@ export async function GET(req) {
       return {
         id: classData.teacher_class_id,
         classId: classroom.classroom_id,
-        name: `${classroom.class} ${classroom.section}`,
+        name: `${classroom.class} ${classroom.section}(${(classroom.medium).split('')[0]})`, // i want to show name like 10A(H) or 10A(E) 
         class: classroom.class,
         section: classroom.section,
         medium: classroom.medium,
