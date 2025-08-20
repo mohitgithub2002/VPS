@@ -28,14 +28,34 @@ async function getNextVersion({ classroom_id, type, exam_id }) {
   return maxV + 1;
 }
 
-function buildStorageKey({ session_year, classroom_id, type, exam_id_or_na, version }) {
+function buildStorageKey({ session_year, classroom_id, type, exam_id_or_na, version, extension }) {
   const base = type === 'exam' ? 'exam-schedule' : 'daily-schedule';
   if (type === 'exam') {
     const examId = exam_id_or_na != null ? String(exam_id_or_na) : 'unknown';
-    return `${base}/${session_year}/${classroom_id}/${examId}/v${version}.pdf`;
+    const ext = extension ? `.${extension}` : '';
+    return `${base}/${session_year}/${classroom_id}/${examId}/v${version}${ext}`;
   }
   // daily schedule
-  return `${base}/${session_year}/${classroom_id}/v${version}.pdf`;
+  const ext = extension ? `.${extension}` : '';
+  return `${base}/${session_year}/${classroom_id}/v${version}${ext}`;
+}
+
+function getExtensionFromMime(mime) {
+  if (!mime || typeof mime !== 'string') return null;
+  const lower = mime.toLowerCase();
+  switch (lower) {
+    case 'application/pdf':
+      return 'pdf';
+    case 'image/png':
+      return 'png';
+    case 'image/jpeg':
+    case 'image/jpg':
+      return 'jpg';
+    case 'image/webp':
+      return 'webp';
+    default:
+      return null;
+  }
 }
 
 async function signGetUrl(Key) {
@@ -84,13 +104,16 @@ export async function POST(req) {
     }
 
     const version = await getNextVersion({ classroom_id, type, exam_id });
-    const storage_key = buildStorageKey({ session_year, classroom_id, type, exam_id_or_na: exam_id, version });
+    const contentType = (file && typeof file.type === 'string' && file.type.trim().length > 0)
+      ? file.type
+      : 'application/octet-stream';
+    const extension = getExtensionFromMime(contentType);
+    const storage_key = buildStorageKey({ session_year, classroom_id, type, exam_id_or_na: exam_id, version, extension });
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    const contentType = 'application/pdf';
     await s3.send(new PutObjectCommand({ Bucket: S3_BUCKET, Key: storage_key, Body: buffer, ContentType: contentType }));
-    console.log('auth.admin?.id', auth.admin?.id);
+    console.log('file type ', contentType);
     const insertRow = {
       classroom_id,
       exam_id,
