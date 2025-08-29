@@ -34,8 +34,7 @@ export async function GET(req) {
     const offset = (page - 1) * limit;
 
     const status = searchParams.get('status'); // ongoing | upcoming | completed | declared
-    const classFilter = searchParams.get('class');
-    const sectionFilter = searchParams.get('section');
+    const classroomIdFilter = searchParams.get('classroomId');
     const examTypeFilter = searchParams.get('examType'); // match exam_type.code or name
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
@@ -49,6 +48,7 @@ export async function GET(req) {
         exam_id,
         name,
         start_date,
+        end_date,
         is_declared,
         classroom:classroom_id(class, section),
         exam_type:exam_type_id(name, code)
@@ -58,6 +58,9 @@ export async function GET(req) {
 
     if (startDate) query = query.gte('start_date', startDate);
     if (endDate) query = query.lte('start_date', endDate);
+    
+    // Apply classroom filter directly in the database query
+    if (classroomIdFilter) query = query.eq('classroom_id', classroomIdFilter);
 
     // Status mapping
     if (status === 'declared' || status === 'completed') {
@@ -77,29 +80,14 @@ export async function GET(req) {
     const { data: exams, error, count } = await query;
     if (error) return err('INTERNAL_ERROR', 'Failed to fetch exams', 500);
 
-    // Apply client-side filters for classroom/examType using joined aliases
+    // Apply client-side filters for examType using joined aliases
     let filtered = exams || [];
-    if (classFilter) filtered = filtered.filter(e => (e.classroom?.class || '').toString() === classFilter.toString());
-    if (sectionFilter) filtered = filtered.filter(e => (e.classroom?.section || '').toString().toLowerCase() === sectionFilter.toString().toLowerCase());
     if (examTypeFilter) {
       const low = examTypeFilter.toLowerCase();
       filtered = filtered.filter(e => (e.exam_type?.code || '').toLowerCase() === low || (e.exam_type?.name || '').toLowerCase() === low);
     }
 
-    // Fetch summary stats per exam (completedStudents etc.) from exam_summary
-    const examIds = filtered.map(e => e.exam_id);
-    let summaries = [];
-    if (examIds.length) {
-      const { data: sumRows } = await supabase
-        .from('exam_summary')
-        .select('exam_id, enrollment_id, total_marks, max_marks, percentage');
-      summaries = sumRows || [];
-    }
-
     const items = filtered.map(e => {
-      const s = summaries.filter(r => r.exam_id === e.exam_id);
-      const completedStudents = s.length;
-      const maxMarks = s.length ? Number(s[0].max_marks ?? 0) : null; // not reliable if mixed; best-effort
       return {
         examId: e.exam_id,
         examName: e.name || e.exam_type?.name || null,
@@ -108,12 +96,7 @@ export async function GET(req) {
         section: e.classroom?.section || null,
         status: e.is_declared ? 'declared' : 'scheduled',
         startDate: e.start_date,
-        endDate: null,
-        totalStudents: null,
-        maxMarks,
-        completedStudents,
-        createdAt: null,
-        updatedAt: null
+        endDate: e.end_date,
       };
     });
 
