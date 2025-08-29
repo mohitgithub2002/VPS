@@ -107,8 +107,6 @@ export async function PUT(req, { params }) {
     // Combine both lists
     const allSummaries = [...presentSummaries, ...absentSummaries];
 
-    console.log('Present students:', presentSummaries.length, 'Absent students:', absentSummaries.length);
-    console.log('All summaries with ranks:', allSummaries);
 
     // Upsert summaries
     if (allSummaries.length) {
