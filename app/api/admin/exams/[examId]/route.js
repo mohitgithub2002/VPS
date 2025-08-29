@@ -123,6 +123,11 @@ export async function GET(req, { params }) {
              // Check if student is absent for any subject
              const isAbsent = studentMarks.some(m => m.is_absent === true);
              
+             // Check if student is partially absent (some subjects absent, some present)
+             const absentSubjects = studentMarks.filter(m => m.is_absent === true);
+             const presentSubjects = studentMarks.filter(m => m.is_absent !== true);
+             const isPartiallyAbsent = absentSubjects.length > 0 && presentSubjects.length > 0;
+             
              const subjectResults = subjects.map(subject => {
                const mark = studentMarks.find(m => m.subject_id === subject.subjectId);
                
@@ -173,7 +178,9 @@ export async function GET(req, { params }) {
 
              // Determine overall status
              let overallStatus = 'pending';
-             if (isAbsent) {
+             if (isPartiallyAbsent) {
+               overallStatus = 'partial present';
+             } else if (isAbsent && absentSubjects.length === subjects.length) {
                overallStatus = 'absent';
              } else if (summary) {
                overallStatus = 'completed';
@@ -181,18 +188,18 @@ export async function GET(req, { params }) {
                overallStatus = 'partial';
              }
 
-             return {
-               studentId: enrollment.students?.student_id,
-               studentName: enrollment.students?.name,
-               rollNumber: enrollment.roll_no,
-               totalMarks: isAbsent ? 0 : totalMarks,
-               maxMarks: isAbsent ? 0 : maxMarks,
-               percentage: isAbsent ? 0 : percentage,
-               rank: isAbsent ? null : (summary?.rank || null),
-               grade: isAbsent ? 'F' : (summary?.grade || null),
-               status: overallStatus,
-               subjectResults
-             };
+                           return {
+                studentId: enrollment.students?.student_id,
+                studentName: enrollment.students?.name,
+                rollNumber: enrollment.roll_no,
+                totalMarks: summary?.total_marks ? Number(summary.total_marks) : (isPartiallyAbsent ? totalMarks : (isAbsent && absentSubjects.length === subjects.length ? 0 : totalMarks)),
+                maxMarks: summary?.max_marks ? Number(summary.max_marks) : (isPartiallyAbsent ? maxMarks : (isAbsent && absentSubjects.length === subjects.length ? 0 : maxMarks)),
+                percentage: summary?.percentage ? Number(summary.percentage) : (isPartiallyAbsent ? percentage : (isAbsent && absentSubjects.length === subjects.length ? 0 : percentage)),
+                rank: summary?.rank || null,
+                grade: summary?.grade || (isAbsent && absentSubjects.length === subjects.length ? 'F' : null),
+                status: overallStatus,
+                subjectResults
+              };
            });
          }
 
