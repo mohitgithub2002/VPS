@@ -79,11 +79,12 @@ export async function POST(req) {
  * Retrieves all students from the database
  * @param {string} sessionId - Optional session ID to filter students
  * @param {string} medium - Optional medium to filter students
+ * @param {string} search - Optional search term to filter students
  * @param {number} page - Page number for pagination
  * @param {number} limit - Number of items per page
  * @returns {Promise<Object>} Supabase query result containing all students
  */
-async function getAllStudents(sessionId, medium, page = 1, limit = 10) {
+async function getAllStudents(sessionId, medium, search, page = 1, limit = 10) {
     const offset = (page - 1) * limit;
     
     let query = supabase
@@ -128,6 +129,17 @@ async function getAllStudents(sessionId, medium, page = 1, limit = 10) {
         query = query.eq('medium', medium);
     }
 
+    // Add search functionality
+    if (search && search.trim()) {
+        const searchTerm = search.trim();
+        query = query.or(`
+            name.ilike.%${searchTerm}%,
+            mobile.ilike.%${searchTerm}%,
+            student_enrollment.roll_no.ilike.%${searchTerm}%,
+            father_name.ilike.%${searchTerm}%
+        `);
+    }
+
     return query.range(offset, offset + limit - 1);
 }
 
@@ -136,11 +148,12 @@ async function getAllStudents(sessionId, medium, page = 1, limit = 10) {
  * @param {string} className - The class name to filter students
  * @param {string} sessionId - The session ID to filter students
  * @param {string} medium - The medium to filter students
+ * @param {string} search - Optional search term to filter students
  * @param {number} page - Page number for pagination
  * @param {number} limit - Number of items per page
  * @returns {Promise<Object>} Supabase query result containing filtered students
  */
-async function getStudentsByClass(className, sessionId, medium, page = 1, limit = 20) {
+async function getStudentsByClass(className, sessionId, medium, search, page = 1, limit = 20) {
     const offset = (page - 1) * limit;
     
     let query = supabase
@@ -186,6 +199,18 @@ async function getStudentsByClass(className, sessionId, medium, page = 1, limit 
         query = query.eq('medium', medium);
     }
 
+    // Add search functionality
+    if (search && search.trim()) {
+        const searchTerm = search.trim();
+        query = query.or(`
+            name.ilike.%${searchTerm}%,
+            mobile.ilike.%${searchTerm}%,   
+            student_enrollment.roll_no.ilike.%${searchTerm}%,
+            father_name.ilike.%${searchTerm}%,
+            
+        `);
+    }
+
     return query.range(offset, offset + limit - 1);
 }
 
@@ -195,11 +220,12 @@ async function getStudentsByClass(className, sessionId, medium, page = 1, limit 
  * @param {string} section - The section to filter students
  * @param {string} sessionId - The session ID to filter students
  * @param {string} medium - The medium to filter students
+ * @param {string} search - Optional search term to filter students
  * @param {number} page - Page number for pagination
  * @param {number} limit - Number of items per page
  * @returns {Promise<Object>} Supabase query result containing filtered students
  */
-async function getStudentsByClassAndSection(className, section, sessionId, medium, page = 1, limit = 20) {
+async function getStudentsByClassAndSection(className, section, sessionId, medium, search, page = 1, limit = 20) {
     const offset = (page - 1) * limit;
     
     let query = supabase
@@ -244,6 +270,17 @@ async function getStudentsByClassAndSection(className, section, sessionId, mediu
     
     if (medium) {
         query = query.eq('medium', medium);
+    }
+
+    // Add search functionality
+    if (search && search.trim()) {
+        const searchTerm = search.trim();
+        query = query.or(`
+            name.ilike.%${searchTerm}%,
+            mobile.ilike.%${searchTerm}%,
+            student_enrollment.roll_no.ilike.%${searchTerm}%,
+            father_name.ilike.%${searchTerm}%
+        `);
     }
 
     return query.range(offset, offset + limit - 1);
@@ -356,6 +393,7 @@ async function getStudentByRollNo(rollNo) {
  * - rollNo: Get specific student by roll number
  * - sessionId: Filter students by academic session ID
  * - medium: Filter students by medium
+ * - search: Search term to filter students by name, roll number, email, mobile, etc.
  * - page: Page number for pagination
  * - limit: Number of items per page
  * 
@@ -378,8 +416,9 @@ export async function GET(req) {
         const rollNo = searchParams.get('rollNo');
         const sessionId = searchParams.get('sessionId');
         const medium = searchParams.get('medium');
+        const search = searchParams.get('search');
         const page = parseInt(searchParams.get('page') || '1');
-        const limit = parseInt(searchParams.get('limit') || '20');
+        const limit = parseInt(searchParams.get('limit') || '50');
 
         let result;
 
@@ -399,11 +438,11 @@ export async function GET(req) {
                 );
             }
         } else if (className && section) {
-            result = await getStudentsByClassAndSection(className, section, sessionId, medium, page, limit);
+            result = await getStudentsByClassAndSection(className, section, sessionId, medium, search, page, limit);
         } else if (className) {
-            result = await getStudentsByClass(className, sessionId, medium, page, limit);
+            result = await getStudentsByClass(className, sessionId, medium, search, page, limit);
         } else {
-            result = await getAllStudents(sessionId, medium, page, limit);
+            result = await getAllStudents(sessionId, medium, search, page, limit);
         }
 
         const { data, error, count } = result;
@@ -483,7 +522,8 @@ export async function GET(req) {
                     class: className,
                     section: section,
                     sessionId: sessionId,
-                    medium: medium
+                    medium: medium,
+                    search: search
                 }
             },
             timestamp: new Date().toISOString()
@@ -508,7 +548,8 @@ export async function GET(req) {
                     class: className,
                     section: section,
                     sessionId: sessionId,
-                    medium: medium
+                    medium: medium,
+                    search: search
                 }
             },
             timestamp: new Date().toISOString()
