@@ -132,12 +132,7 @@ async function getAllStudents(sessionId, medium, search, page = 1, limit = 10) {
     // Add search functionality
     if (search && search.trim()) {
         const searchTerm = search.trim();
-        query = query.or(`
-            name.ilike.%${searchTerm}%,
-            mobile.ilike.%${searchTerm}%,
-            student_enrollment.roll_no.ilike.%${searchTerm}%,
-            father_name.ilike.%${searchTerm}%
-        `);
+        query = query.or(`name.ilike.%${searchTerm}%,mobile.ilike.%${searchTerm}%,father_name.ilike.%${searchTerm}%`);
     }
 
     return query.range(offset, offset + limit - 1);
@@ -202,13 +197,7 @@ async function getStudentsByClass(className, sessionId, medium, search, page = 1
     // Add search functionality
     if (search && search.trim()) {
         const searchTerm = search.trim();
-        query = query.or(`
-            name.ilike.%${searchTerm}%,
-            mobile.ilike.%${searchTerm}%,   
-            student_enrollment.roll_no.ilike.%${searchTerm}%,
-            father_name.ilike.%${searchTerm}%,
-            
-        `);
+        query = query.or(`name.ilike.%${searchTerm}%,mobile.ilike.%${searchTerm}%,father_name.ilike.%${searchTerm}%`);
     }
 
     return query.range(offset, offset + limit - 1);
@@ -275,12 +264,7 @@ async function getStudentsByClassAndSection(className, section, sessionId, mediu
     // Add search functionality
     if (search && search.trim()) {
         const searchTerm = search.trim();
-        query = query.or(`
-            name.ilike.%${searchTerm}%,
-            mobile.ilike.%${searchTerm}%,
-            student_enrollment.roll_no.ilike.%${searchTerm}%,
-            father_name.ilike.%${searchTerm}%
-        `);
+        query = query.or(`name.ilike.%${searchTerm}%,mobile.ilike.%${searchTerm}%,father_name.ilike.%${searchTerm}%`);
     }
 
     return query.range(offset, offset + limit - 1);
