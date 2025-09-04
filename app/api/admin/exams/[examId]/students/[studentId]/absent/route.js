@@ -27,7 +27,7 @@ export async function PUT(req, { params }) {
       .eq('exam_id', examId)
       .maybeSingle();
     if (!exam) return err('EXAM_NOT_FOUND', 'Exam not found', 404);
-    if (exam.is_declared) return err('EXAM_CANNOT_BE_MODIFIED', 'Cannot modify exam after results have been declared', 409);
+    
 
     // Enrollment
     const { data: enr } = await supabase

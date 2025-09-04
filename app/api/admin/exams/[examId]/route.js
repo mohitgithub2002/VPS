@@ -324,11 +324,12 @@ export async function PUT(req, { params }) {
       .eq('exam_id', examId)
       .maybeSingle();
     if (!existing) return err('EXAM_NOT_FOUND', 'Exam not found', 404);
-    if (existing.is_declared) return err('EXAM_CANNOT_BE_MODIFIED', 'Cannot modify exam after results have been declared', 409);
+    
 
     const patch = {};
     if (body.examName) patch.name = body.examName;
     if (body.startDate) patch.start_date = body.startDate;
+    if(body.endDate) patch.end_date = body.endDate;
     if (body.examType) {
       const { data: et } = await supabase
         .from('exam_type')
@@ -345,7 +346,7 @@ export async function PUT(req, { params }) {
       .from('exam')
       .update(patch)
       .eq('exam_id', examId)
-      .select('exam_id, name, start_date, is_declared, exam_type:exam_type_id(name, code)')
+      .select('exam_id, name, start_date, end_date, is_declared, exam_type:exam_type_id(name, code)')
       .maybeSingle();
     if (upErr) return err('INTERNAL_ERROR', 'Failed to update exam', 500);
 
