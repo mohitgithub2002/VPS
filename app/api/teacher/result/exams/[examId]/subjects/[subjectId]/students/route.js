@@ -82,27 +82,32 @@ export async function GET(req, { params }) {
     // 2. Fetch all marks for these enrollments in the subject/exam
     const { data: marksRows, error: marksErr } = await supabase
       .from('exam_mark')
-      .select('enrollment_id, marks_obtained, max_marks')
+      .select('enrollment_id, marks_obtained, max_marks, is_absent')
       .eq('exam_id', examId)
       .eq('subject_id', subjectId);
     if (marksErr) throw marksErr;
 
     const marksMap = {};
     (marksRows || []).forEach(r => {
-      marksMap[r.enrollment_id] = { marks: r.marks_obtained === null ? null : Number(r.marks_obtained), maxMarks: Number(r.max_marks) };
+      marksMap[r.enrollment_id] = { 
+        marks: r.marks_obtained === null ? null : Number(r.marks_obtained), 
+        maxMarks: Number(r.max_marks),
+        isAbsent: r.is_absent || false
+      };
     });
 
     // 3. Compose list
     let list = enrollments.map(e => {
       const st = e.students;
-      const markObj = marksMap[e.enrollment_id] || { marks: null, maxMarks: marksRows?.[0]?.max_marks || 0 };
+      const markObj = marksMap[e.enrollment_id] || { marks: null, maxMarks: marksRows?.[0]?.max_marks || 0, isAbsent: false };
       return {
         studentId: st.student_id,
         rollNo: String(e.roll_no).padStart(4, '0'),
         name: st.name,
         marks: markObj.marks,
         maxMarks: Number(markObj.maxMarks),
-        grade: markObj.marks != null ? computeGrade(markObj.marks, markObj.maxMarks) : null
+        grade: markObj.marks != null ? computeGrade(markObj.marks, markObj.maxMarks) : null,
+        isAbsent: markObj.isAbsent
       };
     });
 

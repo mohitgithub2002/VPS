@@ -47,8 +47,9 @@ export async function GET(req) {
     const enrollmentId = enrollment.enrollment_id;
     const sessionId = enrollment.session_id;
 
-    // 3. Fetch exam summaries for this enrollment, join exam for name/type/date
-    let summaryQuery = supabase
+    // 3. Fetch exam summaries with exam details in a single optimized query
+    // Only include exams that have been declared by admin
+    const { data: summaries, error: summariesError } = await supabase
       .from('exam_summary')
       .select(`
         exam_id,
@@ -57,20 +58,33 @@ export async function GET(req) {
         percentage,
         rank,
         grade,
-        exam:exam_id(
+        exam!inner(
+          exam_id,
           name,
           start_date,
           exam_type_id,
-          exam_type:exam_type_id(name, code)
+          is_declared,
+          exam_type!inner(
+            exam_type_id,
+            name,
+            code
+          )
         )
       `)
-      .eq('enrollment_id', enrollmentId);
-    const { data: summaries, error: summariesError } = await summaryQuery;
+      .eq('enrollment_id', enrollmentId)
+      .eq('exam.is_declared', true);
+
     if (summariesError) {
+      console.error('Summaries error:', summariesError);
       return NextResponse.json({ success: false, message: 'Failed to fetch exam summaries' }, { status: 500 });
     }
 
-    // 4. Compose results
+    if (!summaries || summaries.length === 0) {
+      return NextResponse.json({ success: true, data: [] });
+    }
+
+    console.log('summaries with exam data:', summaries);
+    // 4. Compose results using the joined data
     let results = (summaries || []).map(s => ({
       id: s.exam_id,
       examId: s.exam?.exam_type_id,
@@ -79,7 +93,7 @@ export async function GET(req) {
       examDate: s.exam?.start_date,
       isCompleted: true, // All in summary are completed
       totalMarks: s.total_marks != null ? Number(s.total_marks) : null,
-      totalMaxMarks: s.max_marks != null ? Number(s.max_marks) : null, // Not available in summary
+      totalMaxMarks: s.max_marks != null ? Number(s.max_marks) : null,
       percentage: s.percentage != null ? Number(s.percentage) : null,
       rank: s.rank != null ? s.rank : null,
       grade: s.grade || null

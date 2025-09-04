@@ -28,9 +28,21 @@ export async function PUT(req, { params }) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const { marks } = body || {};
-  if (marks === undefined || marks === null) {
-    return NextResponse.json({ success: false, message: '"marks" field is required' }, { status: 400 });
+  const { marks, isAbsent } = body || {};
+  
+  // Validate input - either marks or isAbsent must be provided
+  if (marks === undefined && isAbsent === undefined) {
+    return NextResponse.json({ success: false, message: 'Either "marks" or "isAbsent" field is required' }, { status: 400 });
+  }
+  
+  // If marking as absent, marks should be null
+  if (isAbsent === true && marks !== null && marks !== undefined) {
+    return NextResponse.json({ success: false, message: 'Cannot provide marks when marking student as absent' }, { status: 400 });
+  }
+  
+  // If providing marks, isAbsent should be false or undefined
+  if (marks !== null && marks !== undefined && isAbsent === true) {
+    return NextResponse.json({ success: false, message: 'Cannot mark as absent when providing marks' }, { status: 400 });
   }
 
   try {
@@ -62,9 +74,23 @@ export async function PUT(req, { params }) {
     }
 
     // 4. Update exam_mark row
+    const updateData = {
+      updated_by: teacherId,
+      updated_at: new Date().toISOString()
+    };
+    
+    // Handle marks and absent status
+    if (isAbsent === true) {
+      updateData.marks_obtained = 0;
+      updateData.is_absent = true;
+    } else {
+      updateData.marks_obtained = marks;
+      updateData.is_absent = false;
+    }
+    
     const { data: updatedRows, error: updateErr } = await supabase
       .from('exam_mark')
-      .update({ marks_obtained: marks, updated_by: teacherId, updated_at: new Date().toISOString() })
+      .update(updateData)
       .eq('exam_id', examId)
       .eq('subject_id', subjectId)
       .eq('enrollment_id', enrollmentId)
@@ -91,7 +117,8 @@ export async function PUT(req, { params }) {
         if (perc >= 50) return 'C';
         if (perc >= 40) return 'D';
         return 'F';
-      })() : null
+      })() : null,
+      isAbsent: row.is_absent || false
     } });
   } catch (err) {
     console.error('Teacher → Result → Update mark error:', err);

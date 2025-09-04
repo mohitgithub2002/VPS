@@ -31,8 +31,8 @@ export async function GET(req, { params }) {
       .maybeSingle();
     if (!tc) return NextResponse.json({ success: false, message: 'You are not assigned to this class' }, { status: 403 });
 
-    // Fetch summaries and all class enrollments in parallel
-    const [{ data: summaries, error: sumErr }, { data: allEnrollments, error: enrollErr }] = await Promise.all([
+    // Fetch summaries, all class enrollments, and exam marks in parallel
+    const [{ data: summaries, error: sumErr }, { data: allEnrollments, error: enrollErr }, { data: examMarks, error: marksErr }] = await Promise.all([
       supabase
         .from('exam_summary')
         .select('enrollment_id, total_marks, percentage, rank, grade, max_marks')
@@ -40,24 +40,69 @@ export async function GET(req, { params }) {
       supabase
         .from('student_enrollment')
         .select('enrollment_id, roll_no, students(student_id, name)')
-        .eq('classroom_id', exam.classroom_id)
+        .eq('classroom_id', exam.classroom_id),
+      supabase
+        .from('exam_mark')
+        .select('enrollment_id, subject_id, marks_obtained, max_marks, is_absent, subject:subject_id(name)')
+        .eq('exam_id', examId)
     ]);
     if (sumErr) throw sumErr;
     if (enrollErr) throw enrollErr;
+    if (marksErr) throw marksErr;
+
+    // Build quick maps
+    const infoMap = {};
+    (allEnrollments || []).forEach(e => {
+      infoMap[e.enrollment_id] = {
+        studentId: e.students?.student_id,
+        name: e.students?.name,
+        rollNo: e.roll_no
+      };
+    });
+
+    // Create marks map by enrollment_id
+    const marksMap = {};
+    (examMarks || []).forEach(mark => {
+      if (!marksMap[mark.enrollment_id]) {
+        marksMap[mark.enrollment_id] = [];
+      }
+      marksMap[mark.enrollment_id].push({
+        subjectId: mark.subject_id,
+        subjectName: mark.subject?.name,
+        marksObtained: mark.marks_obtained,
+        maxMarks: mark.max_marks,
+        isAbsent: mark.is_absent
+      });
+    });
+
+    // Check for students who are absent (all marks are absent)
+    const absentEnrollmentIds = new Set();
+    Object.keys(marksMap).forEach(enrollmentId => {
+      const marks = marksMap[enrollmentId];
+      if (marks.length > 0 && marks.every(mark => mark.isAbsent)) {
+        absentEnrollmentIds.add(parseInt(enrollmentId));
+      }
+    });
 
     if (!summaries || summaries.length === 0) {
       // still include absent students list
-      const studentsAbsent = (allEnrollments || []).map(e => ({
-        rank: null,
-        studentId: e.students?.student_id,
-        rollNo: String(e.roll_no).padStart(4, '0'),
-        name: e.students?.name,
-        totalMarks: null,
-        maxMarks: null,
-        percentage: null,
-        grade: null,
-        absent: true
-      }));
+      const studentsAbsent = (allEnrollments || []).map(e => {
+        const isAbsent = absentEnrollmentIds.has(e.enrollment_id);
+        const subjectMarks = marksMap[e.enrollment_id] || [];
+        
+        return {
+          rank: null,
+          studentId: e.students?.student_id,
+          rollNo: String(e.roll_no).padStart(4, '0'),
+          name: e.students?.name,
+          totalMarks: null,
+          maxMarks: null,
+          percentage: null,
+          grade: null,
+          absent: isAbsent,
+          subjectMarks: subjectMarks
+        };
+      });
       return NextResponse.json({ success: true, data: { exam: {
         id: exam.exam_id,
         title: exam.exam_type?.name || `Exam #${exam.exam_id}`,
@@ -70,19 +115,12 @@ export async function GET(req, { params }) {
 
     const enrollmentIds = summaries.map(s => s.enrollment_id);
 
-    // Build quick maps
-    const infoMap = {};
-    (allEnrollments || []).forEach(e => {
-      infoMap[e.enrollment_id] = {
-        studentId: e.students?.student_id,
-        name: e.students?.name,
-        rollNo: e.roll_no
-      };
-    });
-
     // Students who have summary rows (present)
-    const rankedStudents = summaries.map(s => {
+    const students = summaries.map(s => {
       const info = infoMap[s.enrollment_id] || {};
+      const isAbsent = absentEnrollmentIds.has(s.enrollment_id);
+      const subjectMarks = marksMap[s.enrollment_id] || [];
+      
       return {
         rank: s.rank,
         studentId: info.studentId,
@@ -92,26 +130,35 @@ export async function GET(req, { params }) {
         maxMarks: Number(s.max_marks),
         percentage: Number(s.percentage),
         grade: s.grade,
-        absent: false
+        absent: isAbsent,
+        subjectMarks: subjectMarks
       };
     }).sort((a, b) => a.rank - b.rank);
 
-    // Absent students
-    const absentStudents = (allEnrollments || [])
-      .filter(e => !enrollmentIds.includes(e.enrollment_id))
-      .map(e => ({
-        rank: null,
-        studentId: e.students?.student_id,
-        rollNo: String(e.roll_no).padStart(4, '0'),
-        name: e.students?.name,
-        totalMarks: null,
-        maxMarks: null,
-        percentage: null,
-        grade: null,
-        absent: true
-      }));
+    // Add students who are enrolled but don't have summary (completely absent)
+    const summaryEnrollmentIds = new Set(summaries.map(s => s.enrollment_id));
+    const completelyAbsentStudents = (allEnrollments || [])
+      .filter(e => !summaryEnrollmentIds.has(e.enrollment_id))
+      .map(e => {
+        const info = infoMap[e.enrollment_id] || {};
+        const subjectMarks = marksMap[e.enrollment_id] || [];
+        
+        return {
+          rank: null,
+          studentId: info.studentId,
+          rollNo: String(info.rollNo).padStart(4, '0'),
+          name: info.name,
+          totalMarks: null,
+          maxMarks: null,
+          percentage: null,
+          grade: null,
+          absent: true,
+          subjectMarks: subjectMarks
+        };
+      });
 
-    const students = [...rankedStudents, ...absentStudents];
+    // Combine present and absent students
+    const allStudents = [...students, ...completelyAbsentStudents];
 
     // Compute averages / highest
     const totalMarksArr = summaries.map(r => Number(r.total_marks));
@@ -122,14 +169,14 @@ export async function GET(req, { params }) {
       id: exam.exam_id,
       title: exam.exam_type?.name || `Exam #${exam.exam_id}`,
       date: exam.start_date,
-      totalStudents: students.length,
+      totalStudents: allStudents.length,
       gradedStudents: students.length,
       isCompleted: !!exam.is_declared,
       averageMarks,
       highestMarks
     };
 
-    return NextResponse.json({ success: true, data: { exam: examSummary, students } });
+    return NextResponse.json({ success: true, data: { exam: examSummary, students: allStudents } });
   } catch (err) {
     console.error('Teacher → Result → Exam rank error:', err);
     return NextResponse.json({ success: false, message: 'Failed to fetch ranks' }, { status: 500 });
