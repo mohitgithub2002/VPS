@@ -53,10 +53,10 @@ export async function GET(req) {
 
     // 3. Calculate overall percentage (average of all percentages)
     const overall = Number((summaries.reduce((sum, s) => sum + Number(s.percentage), 0) / summaries.length).toFixed(2));
-    // 4. Get best (lowest) rank
-    const rank = Math.min(...summaries.map(s => s.rank).filter(r => r != null));
-    // 5. Get last exam (with code)
+    // 4. Get rank from the last exam
     const lastExamSummary = summaries[0];
+    const rank = lastExamSummary?.rank || null;
+    // 5. Get last exam (with code)
     let lastExam = null;
     if (lastExamSummary) {
       lastExam = {
