@@ -166,16 +166,42 @@ export async function GET(req) {
     const classroom_id = searchParams.get('classroom_id') ? parseInt(searchParams.get('classroom_id'), 10) : null;
     const type = searchParams.get('type') ? String(searchParams.get('type')).toLowerCase() : null; // daily|exam
     const exam_id = searchParams.get('exam_id') ? parseInt(searchParams.get('exam_id'), 10) : null;
+    const exam_type_id = searchParams.get('exam_type_id') ? parseInt(searchParams.get('exam_type_id'), 10) : null;
 
+    // Build the query with left join to handle both daily and exam schedules
     let q = supabase
       .from('schedule_files')
-      .select('*')
-      .order('updated_at', { ascending: false });
+      .select(`
+        schedule_id,
+        type,
+        title,
+        created_at,
+        classroom_id,
+        is_current,
+        exam_id,
+        exam:exam_id (
+          exam_type_id,
+          exam_type:exam_type_id (
+            code
+          )
+        ),
+        classroom:classroom_id (
+          class,
+          section,
+          medium
+        )
+      `)
+      .eq('is_current', true)
+      .order('created_at', { ascending: false });
 
     if (classroom_id) q = q.eq('classroom_id', classroom_id);
     if (type) q = q.eq('type', type);
     if (exam_id) q = q.eq('exam_id', exam_id);
 
+    // Apply exam_type_id filter if provided
+    if (exam_type_id) {
+      q = q.not('exam_id', 'is', null).eq('exam.exam_type_id', exam_type_id);
+    }
     const { data, error } = await q;
     if (error) throw error;
     return NextResponse.json({ success: true, data });
