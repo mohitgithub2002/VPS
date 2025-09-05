@@ -42,7 +42,7 @@ export async function GET(req, { params }) {
     // Get all test marks for the student
     let testMarkQuery = supabase
       .from('daily_test_mark')
-      .select('test_id, enrollment_id, marks_obtained, remark, daily_test:test_id(name, subject_id, test_date, max_marks), teacher:updated_by(name)')
+      .select('test_id, enrollment_id, marks_obtained, remark, is_absent, daily_test:test_id(name, subject_id, test_date, max_marks), teacher:updated_by(name)')
       .in('enrollment_id', enrollmentIds);
 
     const { data: testMarks } = await testMarkQuery;
@@ -95,19 +95,26 @@ export async function GET(req, { params }) {
     // Compose response
     const items = paged.map(tm => {
       const maxMarks = Number(tm.daily_test?.max_marks) || 0;
-      const percentage = maxMarks > 0 ? Math.round((Number(tm.marks_obtained) / maxMarks) * 100) : 0;
+      const isAbsent = tm.is_absent || false;
+      
+      // For absent students, set marks to null and percentage to 0
+      const marks = isAbsent ? null : Number(tm.marks_obtained);
+      const percentage = isAbsent ? 0 : (maxMarks > 0 ? Math.round((Number(tm.marks_obtained) / maxMarks) * 100) : 0);
+      
       return {
         id: tm.test_id,
         testName: tm.daily_test?.name || '',
         topic: undefined, // Not in schema
         subject: subjectNames[tm.daily_test.subject_id] || tm.daily_test.subject_id,
         date: tm.daily_test.test_date,
-        marks: Number(tm.marks_obtained),
+        marks,
         maxMarks,
         percentage,
-        grade: getGrade(percentage),
+        grade: isAbsent ? 'Absent' : getGrade(percentage),
+        isAbsent,
         teacherRemarks: tm.remark || '',
         teacherName: tm.teacher?.name || undefined
+        
       };
     });
     return NextResponse.json({ success: true, data: { total, items } });

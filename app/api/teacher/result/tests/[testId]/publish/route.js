@@ -47,10 +47,10 @@ export async function PUT(req, { params }) {
     const subjectName = test.subject?.name || 'your';
     const testName = test.name || 'recent test';
 
-    // --- OPTIMIZATION: Fetch marks and student IDs in a single query ---
+    // --- OPTIMIZATION: Fetch marks, absent status and student IDs in a single query ---
     const { data: marksAndStudents, error: marksErr } = await supabase
       .from('daily_test_mark')
-      .select('marks_obtained, student_enrollment!inner(student_id)')
+      .select('marks_obtained, is_absent, student_enrollment!inner(student_id)')
       .eq('test_id', testId);
 
     if (marksErr) throw marksErr;
@@ -59,28 +59,39 @@ export async function PUT(req, { params }) {
       .map(row => ({
         // The 'student_enrollment' object can be null if the relationship is nullable.
         id: row.student_enrollment?.student_id,
-        marks: row.marks_obtained
+        marks: row.marks_obtained,
+        isAbsent: row.is_absent || false
       }))
       .filter(rec => rec.id); // Filter out any students who couldn't be mapped
 
     // --- AMAZING THING: Dispatch notifications in the background (Fire-and-Forget) ---
     const dispatchNotifications = async () => {
       // Run all notification sends in parallel for max speed
-      const notificationPromises = recipients.map(rec =>
-        createAndSend({
+      const notificationPromises = recipients.map(rec => {
+        // Create different notification content based on student status
+        const title = `${subjectName} test results released`;
+        let body;
+        
+        if (rec.isAbsent) {
+          body = `You were marked absent for the ${testName} test.`;
+        } else {
+          body = `You scored ${rec.marks} in the ${testName} test.`;
+        }
+        
+        return createAndSend({
           type: 'result',
-          title: `${subjectName} test marks released`,
-          body: `You scored ${rec.marks} in the ${testName} test.`,
+          title: title,
+          body: body,
           recipients: [{ role: 'student', id: rec.id }],
           data: { "screen": "Results", "params": { "testId": testId, "exam": "exam" } }
         }).catch(err => {
           // Catch errors for individual sends so one failure doesn't stop the others
-          console.error(`Failed to send test mark notification to student ${rec.id}:`, err);
-        })
-      );
+          console.error(`Failed to send test result notification to student ${rec.id}:`, err);
+        });
+      });
 
       await Promise.all(notificationPromises);
-      console.log(`Finished sending ${recipients.length} test mark notifications in the background for test ${testId}.`);
+      console.log(`Finished sending ${recipients.length} test result notifications in the background for test ${testId}.`);
     };
 
     // We don't `await` this call. This is the key to a fast API response.

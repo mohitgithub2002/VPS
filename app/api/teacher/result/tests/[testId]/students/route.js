@@ -58,24 +58,27 @@ export async function GET(req, { params }) {
     // Fetch marks rows for test
     const { data: marksRows } = await supabase
       .from('daily_test_mark')
-      .select('enrollment_id, marks_obtained')
+      .select('enrollment_id, marks_obtained, is_absent')
       .eq('test_id', testId);
 
     const marksMap = {};
+    const absentMap = {};
     (marksRows || []).forEach(r => {
       marksMap[r.enrollment_id] = r.marks_obtained === null ? null : Number(r.marks_obtained);
+      absentMap[r.enrollment_id] = r.is_absent || false;
     });
 
     const list = enrollments.map(e => {
       const student = e.students;
-      const marks = marksMap[e.enrollment_id] ?? null;
+      const isAbsent = absentMap[e.enrollment_id] || false;
+      const marks = isAbsent ? null : (marksMap[e.enrollment_id] ?? null);
       return {
         studentId: student.student_id,
         rollNo: String(e.roll_no).padStart(4, '0'),
         name: student.name,
         marks,
         maxMarks: Number(test.max_marks),
-        grade: marks != null ? computeGrade(marks, test.max_marks) : null
+        isAbsent: isAbsent
       };
     });
 
@@ -88,6 +91,12 @@ export async function GET(req, { params }) {
     // Sort
     filtered.sort((a, b) => {
       if (sort === 'marks') {
+        // Handle absent students - put them at the end
+        if (a.isAbsent && !b.isAbsent) return 1;
+        if (!a.isAbsent && b.isAbsent) return -1;
+        if (a.isAbsent && b.isAbsent) return 0;
+        
+        // Sort present students by marks
         if (a.marks == null && b.marks == null) return 0;
         if (a.marks == null) return 1;
         if (b.marks == null) return -1;
