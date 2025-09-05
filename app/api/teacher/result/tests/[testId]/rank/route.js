@@ -2,17 +2,6 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateUser, unauthorized } from '@/lib/auth';
 
-function computeGrade(marks, maxMarks) {
-  if (marks === null || marks === undefined || maxMarks === 0) return null;
-  const perc = (marks / maxMarks) * 100;
-  if (perc >= 90) return 'A+';
-  if (perc >= 80) return 'A';
-  if (perc >= 70) return 'B+';
-  if (perc >= 60) return 'B';
-  if (perc >= 50) return 'C';
-  if (perc >= 40) return 'D';
-  return 'F';
-}
 
 export async function GET(req, { params }) {
   const auth = await authenticateUser(req);
@@ -45,7 +34,7 @@ export async function GET(req, { params }) {
     // Fetch marks
     const { data: marksRows } = await supabase
       .from('daily_test_mark')
-      .select('enrollment_id, marks_obtained')
+      .select('enrollment_id, marks_obtained, is_absent')
       .eq('test_id', testId);
 
     if (!marksRows || marksRows.length === 0) {
@@ -71,27 +60,41 @@ export async function GET(req, { params }) {
     // Compose student list
     const students = marksRows.map(r => {
       const info = infoMap[r.enrollment_id] || {};
-      const perc = test.max_marks > 0 ? (Number(r.marks_obtained) / Number(test.max_marks)) * 100 : 0;
+      const isAbsent = r.is_absent || false;
+      const marks = isAbsent ? null : Number(r.marks_obtained);
+      const perc = isAbsent || test.max_marks <= 0 ? 0 : (Number(r.marks_obtained) / Number(test.max_marks)) * 100;
+      
       return {
         studentId: info.studentId,
         name: info.name,
         rollNo: String(info.rollNo).padStart(4, '0'),
-        marks: Number(r.marks_obtained),
+        marks: marks,
         maxMarks: Number(test.max_marks),
-        percentage: Number(perc.toFixed(2)),
-        grade: computeGrade(Number(r.marks_obtained), Number(test.max_marks))
+        percentage: isAbsent ? null : Number(perc.toFixed(2)),
+        isAbsent: isAbsent
       };
-    }).sort((a, b) => b.marks - a.marks);
+    }).sort((a, b) => {
+      // Sort absent students at the end
+      if (a.isAbsent && !b.isAbsent) return 1;
+      if (!a.isAbsent && b.isAbsent) return -1;
+      if (a.isAbsent && b.isAbsent) return 0;
+      // Sort by marks for present students
+      return b.marks - a.marks;
+    });
 
-    // Assign ranks (ties share same rank)
+    // Assign ranks (ties share same rank, absent students get no rank)
     let rank = 0;
     let prevMarks = null;
     students.forEach((s, idx) => {
-      if (prevMarks === null || s.marks !== prevMarks) {
-        rank = rank + 1;
-        prevMarks = s.marks;
+      if (s.isAbsent) {
+        s.rank = null; // Absent students don't get a rank
+      } else {
+        if (prevMarks === null || s.marks !== prevMarks) {
+          rank = rank + 1;
+          prevMarks = s.marks;
+        }
+        s.rank = rank;
       }
-      s.rank = rank;
     });
 
     // Subject name
@@ -103,6 +106,10 @@ export async function GET(req, { params }) {
       .maybeSingle();
     if (subj) subjectName = subj.name;
 
+    // Calculate statistics excluding absent students
+    const presentStudents = students.filter(s => !s.isAbsent);
+    const absentCount = students.filter(s => s.isAbsent).length;
+    
     const testSummary = {
       id: test.test_id,
       title: test.name,
@@ -111,7 +118,9 @@ export async function GET(req, { params }) {
       maxMarks: Number(test.max_marks),
       status: test.is_declared ? 'published' : 'graded',
       studentsCount: students.length,
-      averageMarks: students.length > 0 ? Number((students.reduce((sum, s) => sum + s.marks, 0) / students.length).toFixed(2)) : null
+      presentCount: presentStudents.length,
+      absentCount: absentCount,
+      averageMarks: presentStudents.length > 0 ? Number((presentStudents.reduce((sum, s) => sum + s.marks, 0) / presentStudents.length).toFixed(2)) : null
     };
 
     return NextResponse.json({ success: true, data: { test: testSummary, students } });

@@ -28,10 +28,15 @@ export async function PUT(req, { params }) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const { marks } = body || {};
-  if (marks === undefined || marks === null) {
-    return NextResponse.json({ success: false, message: '"marks" field is required' }, { status: 400 });
+  const { marks, isAbsent } = body || {};
+  
+  // Validate that either marks or isAbsent is provided
+  if (marks === undefined && isAbsent === undefined) {
+    return NextResponse.json({ success: false, message: 'Either "marks" or "isAbsent" field is required' }, { status: 400 });
   }
+  
+  // If marking as absent, marks should be null
+  const finalMarks = isAbsent ? null : marks;
 
   try {
     // Fetch test details
@@ -64,7 +69,8 @@ export async function PUT(req, { params }) {
       .upsert({
         test_id: testId,
         enrollment_id: enrollmentId,
-        marks_obtained: marks,
+        marks_obtained: finalMarks,
+        is_absent: isAbsent || false,
         updated_by: teacherId,
         updated_at: new Date().toISOString()
       }, { onConflict: 'test_id,enrollment_id' })
@@ -78,18 +84,7 @@ export async function PUT(req, { params }) {
       name: undefined,
       marks: upserted.marks_obtained === null ? null : Number(upserted.marks_obtained),
       maxMarks: Number(test.max_marks),
-      grade: (() => {
-        const m = upserted.marks_obtained;
-        if (m == null) return null;
-        const perc = (Number(m) / Number(test.max_marks)) * 100;
-        if (perc >= 90) return 'A+';
-        if (perc >= 80) return 'A';
-        if (perc >= 70) return 'B+';
-        if (perc >= 60) return 'B';
-        if (perc >= 50) return 'C';
-        if (perc >= 40) return 'D';
-        return 'F';
-      })()
+      isAbsent: upserted.is_absent || false
     } });
   } catch (err) {
     console.error('Teacher → Result → Update test mark error:', err);
