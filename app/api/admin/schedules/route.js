@@ -5,6 +5,30 @@ import { s3 } from '@/utils/s3Client';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
+// Utility function to convert UTC date to IST format
+function formatDateInIST(dateString) {
+  if (!dateString) return null;
+  
+  // Create date object from UTC string
+  const utcDate = new Date(dateString);
+  
+  // Check if date is valid
+  if (isNaN(utcDate.getTime())) return null;
+  
+  // Convert UTC to IST by adding 5:30 hours (5*60 + 30 = 330 minutes)
+  const istDate = new Date(utcDate.getTime() + (5 * 60 + 30) * 60 * 1000);
+  
+  // Format the IST date
+  const year = istDate.getFullYear();
+  const month = String(istDate.getMonth() + 1).padStart(2, '0');
+  const day = String(istDate.getDate()).padStart(2, '0');
+  const hours = String(istDate.getHours()).padStart(2, '0');
+  const minutes = String(istDate.getMinutes()).padStart(2, '0');
+  const seconds = String(istDate.getSeconds()).padStart(2, '0');
+  
+  return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
+}
+
 const S3_BUCKET = process.env.SCHEDULES_S3_BUCKET || process.env.AWS_S3_BUCKET || 'vps-docs';
 const SIGN_TTL = 60 * 5; // seconds
 
@@ -178,6 +202,8 @@ export async function GET(req) {
         created_at,
         classroom_id,
         is_current,
+        notes,
+        version,
         exam_id,
         exam:exam_id (
           exam_type_id,
@@ -200,11 +226,18 @@ export async function GET(req) {
 
     // Apply exam_type_id filter if provided
     if (exam_type_id) {
-      q = q.not('exam_id', 'is', null).eq('exam.exam_type_id', exam_type_id);
+      q = q.not('exam', 'is', null).eq('exam.exam_type_id', exam_type_id);
     }
     const { data, error } = await q;
     if (error) throw error;
-    return NextResponse.json({ success: true, data });
+    
+    // Format created_at in IST for each schedule
+    const formattedData = data?.map(schedule => ({
+      ...schedule,
+      created_at: formatDateInIST(schedule.created_at)
+    })) || [];
+    
+    return NextResponse.json({ success: true, data: formattedData });
   } catch (err) {
     console.error('Admin schedules GET error:', err);
     return NextResponse.json({ success: false, message: 'Failed to list schedules' }, { status: 500 });
