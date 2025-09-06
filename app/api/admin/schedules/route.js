@@ -5,6 +5,30 @@ import { s3 } from '@/utils/s3Client';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
+// Utility function to convert UTC date to IST format
+function formatDateInIST(dateString) {
+  if (!dateString) return null;
+  
+  // Create date object from UTC string
+  const utcDate = new Date(dateString);
+  
+  // Check if date is valid
+  if (isNaN(utcDate.getTime())) return null;
+  
+  // Convert UTC to IST by adding 5:30 hours (5*60 + 30 = 330 minutes)
+  const istDate = new Date(utcDate.getTime() + (5 * 60 + 30) * 60 * 1000);
+  
+  // Format the IST date
+  const year = istDate.getFullYear();
+  const month = String(istDate.getMonth() + 1).padStart(2, '0');
+  const day = String(istDate.getDate()).padStart(2, '0');
+  const hours = String(istDate.getHours()).padStart(2, '0');
+  const minutes = String(istDate.getMinutes()).padStart(2, '0');
+  const seconds = String(istDate.getSeconds()).padStart(2, '0');
+  
+  return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
+}
+
 const S3_BUCKET = process.env.SCHEDULES_S3_BUCKET || process.env.AWS_S3_BUCKET || 'vps-docs';
 const SIGN_TTL = 60 * 5; // seconds
 
@@ -166,22 +190,274 @@ export async function GET(req) {
     const classroom_id = searchParams.get('classroom_id') ? parseInt(searchParams.get('classroom_id'), 10) : null;
     const type = searchParams.get('type') ? String(searchParams.get('type')).toLowerCase() : null; // daily|exam
     const exam_id = searchParams.get('exam_id') ? parseInt(searchParams.get('exam_id'), 10) : null;
+    const exam_type_id = searchParams.get('exam_type_id') ? parseInt(searchParams.get('exam_type_id'), 10) : null;
 
+    // Build the query with left join to handle both daily and exam schedules
     let q = supabase
       .from('schedule_files')
-      .select('*')
+      .select(`
+        schedule_id,
+        type,
+        title,
+        created_at,
+        classroom_id,
+        is_current,
+        notes,
+        version,
+        exam_id,
+        exam:exam_id (
+          exam_type_id,
+          exam_type:exam_type_id (
+            code
+          )
+        ),
+        classroom:classroom_id (
+          class,
+          section,
+          medium
+        )
+      `)
+      .eq('is_current', true)
       .order('created_at', { ascending: false });
 
     if (classroom_id) q = q.eq('classroom_id', classroom_id);
     if (type) q = q.eq('type', type);
     if (exam_id) q = q.eq('exam_id', exam_id);
 
+    // Apply exam_type_id filter if provided
+    if (exam_type_id) {
+      q = q.not('exam', 'is', null).eq('exam.exam_type_id', exam_type_id);
+    }
     const { data, error } = await q;
     if (error) throw error;
-    return NextResponse.json({ success: true, data });
+    
+    // Format created_at in IST for each schedule
+    const formattedData = data?.map(schedule => ({
+      ...schedule,
+      created_at: formatDateInIST(schedule.created_at)
+    })) || [];
+    
+    return NextResponse.json({ success: true, data: formattedData });
   } catch (err) {
     console.error('Admin schedules GET error:', err);
     return NextResponse.json({ success: false, message: 'Failed to list schedules' }, { status: 500 });
+  }
+}
+
+export async function PUT(req) {
+  const auth = await authenticateAdmin(req);
+  if (!auth.authenticated) return unauthorized();
+
+  try {
+    const form = await req.formData();
+    const schedule_id = parseInt(form.get('schedule_id'), 10);
+    const title = form.get('title') ? String(form.get('title')).trim() : null;
+    const notes = form.get('notes') ? String(form.get('notes')) : null;
+    const type = form.get('type') ? String(form.get('type')).toLowerCase() : null; // 'daily' | 'exam'
+    const classroom_id = form.get('classroom_id') ? parseInt(form.get('classroom_id'), 10) : null;
+    const exam_id = form.get('exam_id') ? parseInt(form.get('exam_id'), 10) : null;
+    const session_year = form.get('session_year') ? parseInt(form.get('session_year'), 10) : null;
+    const file = form.get('file'); // Optional - only if updating the file
+
+    if (!schedule_id) {
+      return NextResponse.json({ success: false, message: 'schedule_id is required' }, { status: 400 });
+    }
+
+    // Validate type if provided
+    if (type && !['daily', 'exam'].includes(type)) {
+      return NextResponse.json({ success: false, message: 'Invalid type. Must be "daily" or "exam"' }, { status: 400 });
+    }
+
+    // Validate exam_id requirement for exam type
+    if (type === 'exam' && exam_id === null) {
+      return NextResponse.json({ success: false, message: 'exam_id is required for exam schedules' }, { status: 400 });
+    }
+
+    // Check if schedule exists
+    const { data: existingSchedule, error: fetchErr } = await supabase
+      .from('schedule_files')
+      .select('*')
+      .eq('schedule_id', schedule_id)
+      .maybeSingle();
+    
+    if (fetchErr) throw fetchErr;
+    if (!existingSchedule) {
+      return NextResponse.json({ success: false, message: 'Schedule not found' }, { status: 404 });
+    }
+
+    // Validate classroom if changing
+    if (classroom_id && classroom_id !== existingSchedule.classroom_id) {
+      const { data: classroom, error: classroomErr } = await supabase
+        .from('classrooms')
+        .select('classroom_id')
+        .eq('classroom_id', classroom_id)
+        .maybeSingle();
+      if (classroomErr) throw classroomErr;
+      if (!classroom) return NextResponse.json({ success: false, message: 'Classroom not found' }, { status: 404 });
+    }
+
+    // Validate exam if changing
+    if (exam_id && exam_id !== existingSchedule.exam_id) {
+      const { data: ex, error: exErr } = await supabase
+        .from('exam')
+        .select('exam_id')
+        .eq('exam_id', exam_id)
+        .maybeSingle();
+      if (exErr) throw exErr;
+      if (!ex) return NextResponse.json({ success: false, message: 'Exam not found' }, { status: 404 });
+    }
+
+    const updateData = {};
+    if (title !== null) updateData.title = title;
+    if (notes !== null) updateData.notes = notes;
+    if (type !== null) updateData.type = type;
+    if (classroom_id !== null) updateData.classroom_id = classroom_id;
+    if (exam_id !== null) updateData.exam_id = exam_id;
+
+    // If file is provided, handle file update
+    if (file) {
+      const contentType = (file && typeof file.type === 'string' && file.type.trim().length > 0)
+        ? file.type
+        : 'application/octet-stream';
+      const extension = getExtensionFromMime(contentType);
+      
+      // Use updated values or existing values for version calculation
+      const targetClassroomId = classroom_id !== null ? classroom_id : existingSchedule.classroom_id;
+      const targetType = type !== null ? type : existingSchedule.type;
+      const targetExamId = exam_id !== null ? exam_id : existingSchedule.exam_id;
+      const targetSessionYear = session_year !== null ? session_year : (existingSchedule.session_year || new Date().getFullYear());
+      
+      // Get new version number based on target values
+      const newVersion = await getNextVersion({ 
+        classroom_id: targetClassroomId, 
+        type: targetType, 
+        exam_id: targetExamId 
+      });
+      
+      const storage_key = buildStorageKey({ 
+        session_year: targetSessionYear,
+        classroom_id: targetClassroomId, 
+        type: targetType, 
+        exam_id_or_na: targetExamId, 
+        version: newVersion, 
+        extension 
+      });
+
+      // Upload new file to S3
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      await s3.send(new PutObjectCommand({ 
+        Bucket: S3_BUCKET, 
+        Key: storage_key, 
+        Body: buffer, 
+        ContentType: contentType 
+      }));
+
+      // Update database record
+      updateData.storage_key = storage_key;
+      updateData.version = newVersion;
+      updateData.is_current = true;
+      updateData.uploaded_by = auth.admin?.id || null;
+
+      // Set other versions to not current (based on target values)
+      let updateQ = supabase
+        .from('schedule_files')
+        .update({ is_current: false })
+        .eq('classroom_id', targetClassroomId)
+        .eq('type', targetType)
+        .neq('schedule_id', schedule_id);
+      
+      if (targetExamId) {
+        updateQ = updateQ.eq('exam_id', targetExamId);
+      } else {
+        updateQ = updateQ.is('exam_id', null);
+      }
+      
+      const { error: flipErr } = await updateQ;
+      if (flipErr) throw flipErr;
+    }
+
+    // Update the schedule record
+    const { data: updatedSchedule, error: updateErr } = await supabase
+      .from('schedule_files')
+      .update(updateData)
+      .eq('schedule_id', schedule_id)
+      .select('*')
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    // Use target values for headers
+    const targetClassroomId = classroom_id !== null ? classroom_id : existingSchedule.classroom_id;
+    const targetType = type !== null ? type : existingSchedule.type;
+    const targetExamId = exam_id !== null ? exam_id : existingSchedule.exam_id;
+    
+    const headers = new Headers({
+      'ETag': `schedule-${targetClassroomId}-${targetType}-${targetExamId || 0}-v${updatedSchedule.version}`,
+      'Cache-Control': 'private, max-age=60'
+    });
+
+    return NextResponse.json({ success: true, data: updatedSchedule }, { headers });
+  } catch (err) {
+    console.error('Admin schedules PUT error:', err);
+    return NextResponse.json({ success: false, message: 'Failed to update schedule' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req) {
+  const auth = await authenticateAdmin(req);
+  if (!auth.authenticated) return unauthorized();
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const schedule_id = searchParams.get('schedule_id') ? parseInt(searchParams.get('schedule_id'), 10) : null;
+
+    if (!schedule_id) {
+      return NextResponse.json({ success: false, message: 'schedule_id is required' }, { status: 400 });
+    }
+
+    // Check if schedule exists
+    const { data: existingSchedule, error: fetchErr } = await supabase
+      .from('schedule_files')
+      .select('*')
+      .eq('schedule_id', schedule_id)
+      .maybeSingle();
+    
+    if (fetchErr) throw fetchErr;
+    if (!existingSchedule) {
+      return NextResponse.json({ success: false, message: 'Schedule not found' }, { status: 404 });
+    }
+
+    // Delete the schedule record
+    const { error: deleteErr } = await supabase
+      .from('schedule_files')
+      .delete()
+      .eq('schedule_id', schedule_id);
+
+    if (deleteErr) throw deleteErr;
+
+    // Note: S3 file deletion is optional - you might want to keep files for audit purposes
+    // If you want to delete the S3 file as well, uncomment the following code:
+    /*
+    try {
+      await s3.send(new DeleteObjectCommand({ 
+        Bucket: S3_BUCKET, 
+        Key: existingSchedule.storage_key 
+      }));
+    } catch (s3Err) {
+      console.warn('Failed to delete S3 file:', s3Err);
+      // Continue with deletion even if S3 deletion fails
+    }
+    */
+
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Schedule deleted successfully',
+      data: { schedule_id, deleted_at: new Date().toISOString() }
+    });
+  } catch (err) {
+    console.error('Admin schedules DELETE error:', err);
+    return NextResponse.json({ success: false, message: 'Failed to delete schedule' }, { status: 500 });
   }
 }
 
