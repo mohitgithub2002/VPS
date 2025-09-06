@@ -313,7 +313,6 @@ export async function PUT(req) {
     if (type !== null) updateData.type = type;
     if (classroom_id !== null) updateData.classroom_id = classroom_id;
     if (exam_id !== null) updateData.exam_id = exam_id;
-    if (session_year !== null) updateData.session_year = session_year;
 
     // If file is provided, handle file update
     if (file) {
