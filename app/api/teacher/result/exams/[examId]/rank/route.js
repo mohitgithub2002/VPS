@@ -31,28 +31,52 @@ export async function GET(req, { params }) {
       .maybeSingle();
     if (!tc) return NextResponse.json({ success: false, message: 'You are not assigned to this class' }, { status: 403 });
 
-    // Fetch summaries, all class enrollments, and exam marks in parallel
-    const [{ data: summaries, error: sumErr }, { data: allEnrollments, error: enrollErr }, { data: examMarks, error: marksErr }] = await Promise.all([
+    // Fetch summaries and exam marks first to get enrollment IDs
+    const [{ data: summaries, error: sumErr }, { data: examMarks, error: marksErr }] = await Promise.all([
       supabase
         .from('exam_summary')
         .select('enrollment_id, total_marks, percentage, rank, grade, max_marks')
         .eq('exam_id', examId),
-      supabase
-        .from('student_enrollment')
-        .select('enrollment_id, roll_no, students(student_id, name)')
-        .eq('classroom_id', exam.classroom_id),
       supabase
         .from('exam_mark')
         .select('enrollment_id, subject_id, marks_obtained, max_marks, is_absent, subject:subject_id(name)')
         .eq('exam_id', examId)
     ]);
     if (sumErr) throw sumErr;
-    if (enrollErr) throw enrollErr;
     if (marksErr) throw marksErr;
+
+    // Get unique enrollment IDs from exam_mark and exam_summary tables
+    const enrollmentIdsFromMarks = (examMarks || []).map(m => m.enrollment_id);
+    const enrollmentIdsFromSummaries = (summaries || []).map(s => s.enrollment_id);
+    const uniqueEnrollmentIds = [...new Set([...enrollmentIdsFromMarks, ...enrollmentIdsFromSummaries])];
+
+    // If no enrollment IDs found, return empty response
+    if (uniqueEnrollmentIds.length === 0) {
+      return NextResponse.json({ success: true, data: { 
+        exam: {
+          id: exam.exam_id,
+          title: exam.exam_type?.name || `Exam #${exam.exam_id}`,
+          date: exam.start_date,
+          totalStudents: 0,
+          gradedStudents: 0,
+          isCompleted: !!exam.is_declared,
+          averageMarks: null,
+          highestMarks: null
+        }, 
+        students: [] 
+      }});
+    }
+
+    // Fetch student_enrollment ONLY for students in exam_mark or exam_summary tables
+    const { data: enrollments, error: enrollErr } = await supabase
+      .from('student_enrollment')
+      .select('enrollment_id, roll_no, students(student_id, name)')
+      .in('enrollment_id', uniqueEnrollmentIds);
+    if (enrollErr) throw enrollErr;
 
     // Build quick maps
     const infoMap = {};
-    (allEnrollments || []).forEach(e => {
+    (enrollments || []).forEach(e => {
       infoMap[e.enrollment_id] = {
         studentId: e.students?.student_id,
         name: e.students?.name,
@@ -85,8 +109,8 @@ export async function GET(req, { params }) {
     });
 
     if (!summaries || summaries.length === 0) {
-      // still include absent students list
-      const studentsAbsent = (allEnrollments || []).map(e => {
+      // Show students from exam_mark table (no summaries yet)
+      const studentsWithMarks = (enrollments || []).map(e => {
         const isAbsent = absentEnrollmentIds.has(e.enrollment_id);
         const subjectMarks = marksMap[e.enrollment_id] || [];
         
@@ -107,13 +131,13 @@ export async function GET(req, { params }) {
         id: exam.exam_id,
         title: exam.exam_type?.name || `Exam #${exam.exam_id}`,
         date: exam.start_date,
+        totalStudents: studentsWithMarks.length,
+        gradedStudents: 0,
         isCompleted: !!exam.is_declared,
         averageMarks: null,
         highestMarks: null
-      }, students: studentsAbsent } });
+      }, students: studentsWithMarks } });
     }
-
-    const enrollmentIds = summaries.map(s => s.enrollment_id);
 
     // Students who have summary rows (present)
     const students = summaries.map(s => {
@@ -135,12 +159,13 @@ export async function GET(req, { params }) {
       };
     }).sort((a, b) => a.rank - b.rank);
 
-    // Add students who are enrolled but don't have summary (completely absent)
+    // Add students who have marks but no summary (not yet graded/ranked)
     const summaryEnrollmentIds = new Set(summaries.map(s => s.enrollment_id));
-    const completelyAbsentStudents = (allEnrollments || [])
+    const studentsWithoutSummary = (enrollments || [])
       .filter(e => !summaryEnrollmentIds.has(e.enrollment_id))
       .map(e => {
         const info = infoMap[e.enrollment_id] || {};
+        const isAbsent = absentEnrollmentIds.has(e.enrollment_id);
         const subjectMarks = marksMap[e.enrollment_id] || [];
         
         return {
@@ -152,13 +177,13 @@ export async function GET(req, { params }) {
           maxMarks: null,
           percentage: null,
           grade: null,
-          absent: true,
+          absent: isAbsent,
           subjectMarks: subjectMarks
         };
       });
 
-    // Combine present and absent students
-    const allStudents = [...students, ...completelyAbsentStudents];
+    // Combine students with summaries and students without summaries
+    const allStudents = [...students, ...studentsWithoutSummary];
 
     // Compute averages / highest
     const totalMarksArr = summaries.map(r => Number(r.total_marks));

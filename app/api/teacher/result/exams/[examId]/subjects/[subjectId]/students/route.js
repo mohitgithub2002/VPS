@@ -64,22 +64,12 @@ export async function GET(req, { params }) {
     if (!access.ok) {
       return NextResponse.json({ success: false, message: access.message }, { status: access.status });
     }
-    const { classroomId } = access;
 
     const { searchParams } = new URL(req.url);
     const search = searchParams.get('search')?.toLowerCase() || '';
     const sort = (searchParams.get('sort') || 'name').toLowerCase();
 
-    // 1. Fetch all students (enrollments) in class
-    const { data: enrollments, error: enErr } = await supabase
-      .from('student_enrollment')
-      .select('enrollment_id, roll_no, students(student_id, name)')
-      .eq('classroom_id', classroomId);
-    if (enErr) throw enErr;
-
-    const enrollmentIds = enrollments.map(e => e.enrollment_id);
-
-    // 2. Fetch all marks for these enrollments in the subject/exam
+    // 1. Fetch all marks for this exam/subject first to get enrollment IDs
     const { data: marksRows, error: marksErr } = await supabase
       .from('exam_mark')
       .select('enrollment_id, marks_obtained, max_marks, is_absent')
@@ -87,6 +77,22 @@ export async function GET(req, { params }) {
       .eq('subject_id', subjectId);
     if (marksErr) throw marksErr;
 
+    // Get unique enrollment IDs from exam_mark table
+    const enrollmentIdsFromMarks = [...new Set((marksRows || []).map(m => m.enrollment_id))];
+
+    // If no marks exist, return empty list
+    if (enrollmentIdsFromMarks.length === 0) {
+      return NextResponse.json({ success: true, data: [] });
+    }
+
+    // 2. Fetch student enrollments ONLY for students in exam_mark table
+    const { data: enrollments, error: enErr } = await supabase
+      .from('student_enrollment')
+      .select('enrollment_id, roll_no, students(student_id, name)')
+      .in('enrollment_id', enrollmentIdsFromMarks);
+    if (enErr) throw enErr;
+
+    // Build marks map
     const marksMap = {};
     (marksRows || []).forEach(r => {
       marksMap[r.enrollment_id] = { 
@@ -96,8 +102,8 @@ export async function GET(req, { params }) {
       };
     });
 
-    // 3. Compose list
-    let list = enrollments.map(e => {
+    // 3. Compose list (only students with marks)
+    let list = (enrollments || []).map(e => {
       const st = e.students;
       const markObj = marksMap[e.enrollment_id] || { marks: null, maxMarks: marksRows?.[0]?.max_marks || 0, isAbsent: false };
       return {
