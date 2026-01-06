@@ -87,15 +87,35 @@ export async function GET(req, { params }) {
     let statistics = null;
 
     if (includeResults || includeStatistics) {
-      // Get all enrollments for the classroom
-      const { data: enrollments } = await supabase
-        .from('student_enrollment')
-        .select(`
-          enrollment_id,
-          roll_no,
-          students:student_id(student_id, name)
-        `)
-        .eq('classroom_id', exam.classroom_id);
+      // Get unique enrollment IDs from exam_mark table (only students who have marks)
+      const enrollmentIdsFromMarks = [...new Set((marks || []).map(m => m.enrollment_id))];
+      
+      if (enrollmentIdsFromMarks.length === 0) {
+        // No marks exist for this exam yet
+        if (includeStatistics) {
+          statistics = {
+            totalStudents: 0,
+            completedStudents: 0,
+            absentStudents: 0,
+            pendingStudents: 0,
+            averageMarks: 0,
+            averagePercentage: 0,
+            highestMarks: 0,
+            lowestMarks: 0,
+            passPercentage: 0,
+            gradeDistribution: {}
+          };
+        }
+      } else {
+        // Get enrollments only for students who have marks in exam_mark table
+        const { data: enrollments } = await supabase
+          .from('student_enrollment')
+          .select(`
+            enrollment_id,
+            roll_no,
+            students:student_id(student_id, name)
+          `)
+          .in('enrollment_id', enrollmentIdsFromMarks);
 
       if (enrollments && enrollments.length > 0) {
         const enrollmentIds = enrollments.map(e => e.enrollment_id);
@@ -176,17 +196,22 @@ export async function GET(req, { params }) {
                validSubjectResults.reduce((sum, s) => sum + (s.maxMarks || 0), 0);
              const percentage = maxMarks > 0 ? Number(((totalMarks / maxMarks) * 100).toFixed(1)) : null;
 
-             // Determine overall status
-             let overallStatus = 'pending';
-             if (isPartiallyAbsent) {
-               overallStatus = 'partial present';
-             } else if (isAbsent && absentSubjects.length === subjects.length) {
-               overallStatus = 'absent';
-             } else if (summary) {
-               overallStatus = 'completed';
-             } else if (validSubjectResults.some(s => s.status === 'marked')) {
-               overallStatus = 'partial';
-             }
+            // Determine overall status
+            let overallStatus = 'pending';
+            const markedSubjects = validSubjectResults.filter(s => s.status === 'marked');
+            const allSubjectsMarked = validSubjectResults.length > 0 && markedSubjects.length === validSubjectResults.length;
+            
+            if (isPartiallyAbsent) {
+              overallStatus = 'partial present';
+            } else if (isAbsent && absentSubjects.length === subjects.length) {
+              overallStatus = 'absent';
+            } else if (summary || allSubjectsMarked) {
+              // Mark as completed if summary exists OR all subjects have marks entered
+              overallStatus = 'completed';
+            } else if (markedSubjects.length > 0) {
+              // Some subjects marked but not all
+              overallStatus = 'partial';
+            }
 
                            return {
                 studentId: enrollment.students?.student_id,
@@ -244,18 +269,19 @@ export async function GET(req, { params }) {
            });
 
            statistics = {
-             totalStudents,
-             completedStudents,
-             absentStudents,
-             pendingStudents,
-             averageMarks,
-             averagePercentage,
-             highestMarks,
-             lowestMarks,
-             passPercentage,
-             gradeDistribution
-           };
+            totalStudents,
+            completedStudents,
+            absentStudents,
+            pendingStudents,
+            averageMarks,
+            averagePercentage,
+            highestMarks,
+            lowestMarks,
+            passPercentage,
+            gradeDistribution
+          };
         }
+      }
       }
     }
 
