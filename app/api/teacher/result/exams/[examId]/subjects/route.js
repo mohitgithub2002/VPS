@@ -122,21 +122,48 @@ export async function POST(req, { params }) {
       return NextResponse.json({ success: false, message: 'Cannot add subject to a declared exam' }, { status: 400 });
     }
 
-    // Get all enrollments for the classroom/session (session bound to exam)
-    const { data: enrollments, error: enrollmentError } = await supabase
-      .from('student_enrollment')
+    // Check if there are already entries in exam_mark table for this exam
+    const { data: existingMarks, error: marksCheckError } = await supabase
+      .from('exam_mark')
       .select('enrollment_id')
-      .eq('classroom_id', classroomId);
-    if (enrollmentError) throw enrollmentError;
+      .eq('exam_id', examId)
+      .limit(1);
+    if (marksCheckError) throw marksCheckError;
 
-    if (!enrollments || enrollments.length === 0) {
-      return NextResponse.json({ success: false, message: 'No students enrolled in this class' }, { status: 400 });
+    let enrollmentIds = [];
+
+    if (existingMarks && existingMarks.length > 0) {
+      // If exam_mark entries exist, get unique enrollment_ids from exam_mark table
+      const { data: allMarks, error: allMarksError } = await supabase
+        .from('exam_mark')
+        .select('enrollment_id')
+        .eq('exam_id', examId);
+      if (allMarksError) throw allMarksError;
+      
+      enrollmentIds = [...new Set((allMarks || []).map(m => m.enrollment_id))];
+      
+      if (enrollmentIds.length === 0) {
+        return NextResponse.json({ success: false, message: 'No students found in exam marks' }, { status: 400 });
+      }
+    } else {
+      // If no exam_mark entries exist, get all enrollments from classroom
+      const { data: enrollments, error: enrollmentError } = await supabase
+        .from('student_enrollment')
+        .select('enrollment_id')
+        .eq('classroom_id', classroomId);
+      if (enrollmentError) throw enrollmentError;
+
+      if (!enrollments || enrollments.length === 0) {
+        return NextResponse.json({ success: false, message: 'No students enrolled in this class' }, { status: 400 });
+      }
+
+      enrollmentIds = enrollments.map(e => e.enrollment_id);
     }
 
     // Prepare rows to insert into exam_mark (marks_obtained NULL initially)
-    const rows = enrollments.map(e => ({
+    const rows = enrollmentIds.map(enrollmentId => ({
       exam_id: examId,
-      enrollment_id: e.enrollment_id,
+      enrollment_id: enrollmentId,
       subject_id: subjectId,
       marks_obtained: null,
       max_marks: maxMarks,
