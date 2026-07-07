@@ -18,6 +18,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateUser, unauthorized } from '@/lib/auth';
+import { getActiveSessionId } from '@/utils/sessionHelper';
 
 export async function GET(req) {
   // Authenticate teacher
@@ -42,6 +43,9 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const status = searchParams.get('status');
 
+    // Get active session for scoping
+    const activeSessionId = await getActiveSessionId();
+
     // Build base query for teacher's classes
     let query = supabase
       .from('teacher_class')
@@ -57,7 +61,8 @@ export async function GET(req) {
           class,
           section,
           medium,
-          total_student
+          total_student,
+          session_id
         )
       `)
       .eq('teacher_id', teacherId);
@@ -67,6 +72,11 @@ export async function GET(req) {
       query = query.or(`valid_upto.is.null,valid_upto.gte.${new Date().toISOString().split('T')[0]}`);
     } else if (status === 'inactive') {
       query = query.lt('valid_upto', new Date().toISOString().split('T')[0]);
+    }
+
+    // Scope to active session
+    if (activeSessionId) {
+      query = query.eq('classrooms.session_id', activeSessionId);
     }
 
     // Execute query

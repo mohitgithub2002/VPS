@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from "@/utils/supabaseClient";
 import { authenticateAdmin, unauthorized } from '@/lib/auth';
+import { getActiveSession } from '@/utils/sessionHelper';
 
 // Helper function to format response
 const formatResponse = (data, success = true) => {
@@ -71,17 +72,12 @@ export async function GET(request) {
         medium
       `);
 
-    // If session_id is not provided, get the latest session
+    // If session_id is not provided, get the active session
     if (!sessionId) {
-      const { data: latestSession } = await supabase
-        .from('sessions')
-        .select('session_id')
-        .order('start_date', { ascending: false })
-        .limit(1)
-        .single();
+      const activeSession = await getActiveSession();
 
-      if (latestSession) {
-        query = query.eq('session_id', latestSession.session_id);
+      if (activeSession) {
+        query = query.eq('session_id', activeSession.session_id);
       }
     } else {
       query = query.eq('session_id', sessionId);

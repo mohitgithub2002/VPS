@@ -31,6 +31,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateUser, unauthorized } from '@/lib/auth';
+import { getActiveSessionId } from '@/utils/sessionHelper';
 
 export async function GET(req) {
   // Authenticate the incoming request
@@ -51,6 +52,9 @@ export async function GET(req) {
   const teacherId = auth.user.teacherId;
   
   try {
+    // Get the active session ID for scoping
+    const activeSessionId = await getActiveSessionId();
+
     // Execute multiple queries in parallel for optimal performance
     const [classesResponse] = await Promise.all([
       // Fetch classes assigned to the teacher
@@ -67,7 +71,8 @@ export async function GET(req) {
             class,
             section,
             medium,
-            total_student
+            total_student,
+            session_id
           )
         `)
         .eq('teacher_id', teacherId)
@@ -81,7 +86,13 @@ export async function GET(req) {
     let totalStudents = 0;
     
     // Format class data to match the required response structure
-    const formattedClasses = classesResponse.data.map(classData => {
+    // Filter to only include classes from the active session
+    const formattedClasses = classesResponse.data
+      .filter(classData => {
+        if (!activeSessionId) return true;
+        return classData.sections?.session_id === activeSessionId;
+      })
+      .map(classData => {
       const sectionData = classData.sections;
       const studentCount = sectionData.total_student || 0;
       

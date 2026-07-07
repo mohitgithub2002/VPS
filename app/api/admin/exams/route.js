@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateAdmin, unauthorized } from '@/lib/auth';
+import { getActiveSessionId } from '@/utils/sessionHelper';
 
 // Helpers
 function ok(body, status = 200) {
@@ -8,17 +9,6 @@ function ok(body, status = 200) {
 }
 function err(code, message, status = 400, details) {
   return NextResponse.json({ success: false, error: { code, message, details }, timestamp: new Date().toISOString() }, { status });
-}
-
-// Resolve latest session_id if not provided
-async function getLatestSessionId() {
-  const { data } = await supabase
-    .from('sessions')
-    .select('session_id')
-    .order('start_date', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return data?.session_id || null;
 }
 
 // GET /api/admin/exams
@@ -35,6 +25,7 @@ export async function GET(req) {
 
     const status = searchParams.get('status'); // ongoing | upcoming | completed | declared
     const classroomIdFilter = searchParams.get('classroomId');
+    const sessionIdFilter = searchParams.get('sessionId');
     const examTypeFilter = searchParams.get('examType'); // match exam_type.code or name
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
@@ -58,9 +49,27 @@ export async function GET(req) {
 
     if (startDate) query = query.gte('start_date', startDate);
     if (endDate) query = query.lte('start_date', endDate);
-    
-    // Apply classroom filter directly in the database query
-    if (classroomIdFilter) query = query.eq('classroom_id', classroomIdFilter);
+
+    // Session scoping priority: explicit sessionId > classroomId > active session fallback
+    // if (sessionIdFilter) {
+    //   // Frontend explicitly requested a specific session (e.g. viewing previous year)
+    //   query = query.eq('session_id', sessionIdFilter);
+    // } else if (classroomIdFilter) {
+    //   // Classroom filter implicitly scopes to a session
+    //   query = query.eq('classroom_id', classroomIdFilter);
+    if (classroomIdFilter) {
+      // Frontend explicitly requested a specific session (e.g. viewing previous year)
+      query = query.eq('classroom_id', classroomIdFilter);
+    } else if (sessionIdFilter) {
+      // Classroom filter implicitly scopes to a session
+      query = query.eq('session_id', sessionIdFilter);
+    } else {
+      // No filter — default to active session
+      const activeSessionId = await getActiveSessionId();
+      if (activeSessionId) {
+        query = query.eq('session_id', activeSessionId);
+      }
+    }
 
     // Status mapping
     if (status === 'declared' || status === 'completed') {
@@ -119,7 +128,7 @@ export async function POST(req) {
     const body = await req.json();
     const { examName, examType, classroomId, startDate, endDate, subjects } = body || {};
 
-    if (!examName || !classroomId || !startDate || !endDate ) {
+    if (!examName || !classroomId || !startDate || !endDate) {
       return err('VALIDATION_ERROR', 'Missing required fields: examName, classroomId, startDate', 400);
     }
 
@@ -139,7 +148,7 @@ export async function POST(req) {
       .order('session_id', { ascending: false })
       .limit(1)
       .maybeSingle();
-    
+
     if (!classroom) return err('CLASSROOM_NOT_FOUND', 'Classroom not found', 404);
 
     // Resolve exam_type_id (by code or name)
@@ -156,7 +165,7 @@ export async function POST(req) {
         examTypeId = examType;
       }
     }
-   
+
 
     // Create exam row
     const insertRow = {
@@ -204,11 +213,11 @@ export async function POST(req) {
               marks_obtained: null,
               max_marks: s.maxMarks,
               remark: null,
-              updated_by:  null
+              updated_by: null
             });
           });
         });
-        console.log('rows', rows); 
+        console.log('rows', rows);
         if (rows.length) {
           const { error: emErr } = await supabase.from('exam_mark').insert(rows, { upsert: false });
           if (emErr && !String(emErr?.message || '').toLowerCase().includes('duplicate')) {
