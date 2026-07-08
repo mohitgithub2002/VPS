@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/utils/supabaseClient";
 import { z } from "zod";
 import { authenticateAdmin, unauthorized } from '@/lib/auth';
+import { resolveSessionId } from '@/utils/sessionHelper';
 
 // Validation schemas
 const teacherSchema = z.object({
@@ -34,7 +35,7 @@ const formatError = (code, message, fields) => {
   }, { status: 400 });
 };
 
-// GET /api/admin/teachers/[id] - Get teacher details
+// GET /api/admin/teachers/[id]?session_id=<optional> - Get teacher details with session-scoped class assignments
 export async function GET(request, { params }) {
   // Authenticate the incoming request
   const auth = await authenticateAdmin(request);
@@ -44,7 +45,14 @@ export async function GET(request, { params }) {
   }
 
   try {
-    const teacherId = parseInt(params.id);
+    const { id } = await params;
+    const teacherId = parseInt(id);
+
+    // Resolve session: ?session_id= allows viewing any previous session's assignments.
+    // Falls back to the currently active session when not provided.
+    const { searchParams } = new URL(request.url);
+    const requestedSessionId = searchParams.get('session_id');
+    const { sessionId, session: resolvedSession } = await resolveSessionId(requestedSessionId);
 
     // Get teacher details
     const { data: teacher, error: teacherError } = await supabase
@@ -55,28 +63,45 @@ export async function GET(request, { params }) {
 
     if (teacherError) throw teacherError;
 
-    // Get assigned classes
-    const { data: classes, error: classesError } = await supabase
+    // Build the class assignment query.
+    // Using classrooms!inner so only rows whose classroom belongs to the resolved session are returned.
+    let classQuery = supabase
       .from('teacher_class')
       .select(`
         teacher_class_id,
+        class_id,
         is_temporary,
         valid_upto,
         schedule,
-        class_id,
-        classrooms (
+        classrooms!inner (
+          classroom_id,
           class,
           section,
-          medium
+          medium,
+          session_id
         )
       `)
       .eq('teacher_id', teacherId);
+
+    if (sessionId) {
+      classQuery = classQuery.eq('classrooms.session_id', sessionId);
+    }
+
+    const { data: classes, error: classesError } = await classQuery;
 
     if (classesError) throw classesError;
 
     return formatResponse({
       ...teacher,
-      classes: classes?.map(c => ({
+      session: resolvedSession
+        ? {
+            session_id: resolvedSession.session_id,
+            session_name: resolvedSession.session_name,
+            is_active: resolvedSession.is_active,
+          }
+        : null,
+      classes: (classes || []).map(c => ({
+        teacher_class_id: c.teacher_class_id,
         class_id: c.class_id,
         class: c.classrooms?.class,
         section: c.classrooms?.section,
@@ -87,6 +112,7 @@ export async function GET(request, { params }) {
       })),
     });
   } catch (error) {
+    console.error('Teacher GET error:', error);
     return formatError('NOT_FOUND', 'Teacher not found');
   }
 }
