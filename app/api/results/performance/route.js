@@ -15,15 +15,37 @@ export async function GET(req) {
   }
 
   try {
-    // 1. Get all enrollments for the student
-    const { data: enrollments, error: enrollmentsError } = await supabase
-      .from('student_enrollment')
-      .select('enrollment_id')
-      .eq('student_id', studentId);
-    if (enrollmentsError || !enrollments || enrollments.length === 0) {
-      return NextResponse.json({ success: false, message: 'No enrollments found' }, { status: 404 });
+    // 1. Get enrollments scoped appropriately
+    // If sessionId param provided, use it; else default to JWT enrollment
+    const { searchParams } = new URL(req.url);
+    const requestedSessionId = searchParams.get('sessionId');
+
+    let enrollmentIds;
+    if (requestedSessionId) {
+      // Fetch enrollment for the specific session
+      const { data: enrollments, error: enrollmentsError } = await supabase
+        .from('student_enrollment')
+        .select('enrollment_id')
+        .eq('student_id', studentId)
+        .eq('session_id', parseInt(requestedSessionId, 10));
+      if (enrollmentsError || !enrollments || enrollments.length === 0) {
+        return NextResponse.json({ success: false, message: 'No enrollments found for this session' }, { status: 404 });
+      }
+      enrollmentIds = enrollments.map(e => e.enrollment_id);
+    } else if (auth.user.enrollmentId) {
+      // Default to JWT enrollment (current session)
+      enrollmentIds = [auth.user.enrollmentId];
+    } else {
+      // Fallback: all enrollments
+      const { data: enrollments, error: enrollmentsError } = await supabase
+        .from('student_enrollment')
+        .select('enrollment_id')
+        .eq('student_id', studentId);
+      if (enrollmentsError || !enrollments || enrollments.length === 0) {
+        return NextResponse.json({ success: false, message: 'No enrollments found' }, { status: 404 });
+      }
+      enrollmentIds = enrollments.map(e => e.enrollment_id);
     }
-    const enrollmentIds = enrollments.map(e => e.enrollment_id);
 
     // 2. Get all exam summaries for the student, join exam for code
     const { data: summaries, error: summariesError } = await supabase

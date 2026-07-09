@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateUser, unauthorized } from '@/lib/auth';
+import { resolveSessionId } from '@/utils/sessionHelper';
 
 function getGrade(percentage) {
   if (percentage >= 90) return 'A+';
@@ -29,15 +30,37 @@ export async function GET(req, { params }) {
   const sort = searchParams.get('sort') || 'newest';
 
   try {
-    // Get enrollments for the student
-    const { data: enrollments } = await supabase
-      .from('student_enrollment')
-      .select('enrollment_id')
-      .eq('student_id', studentId);
-    if (!enrollments || enrollments.length === 0) {
-      return NextResponse.json({ success: false, message: 'No enrollments found' }, { status: 404 });
+    // Resolve the session: use ?sessionId param if provided, otherwise fall back to active session
+    const requestedSessionId = searchParams.get('sessionId');
+    const { sessionId } = await resolveSessionId(requestedSessionId);
+
+    // Get enrollments scoped to the resolved session
+    let enrollmentIds;
+    if (auth.user.enrollmentId && !requestedSessionId) {
+      // Default: use the JWT enrollment (current session)
+      enrollmentIds = [auth.user.enrollmentId];
+    } else if (sessionId) {
+      // Specific session requested (or no JWT enrollmentId) — look up by session
+      const { data: enrollments, error: enrollmentsError } = await supabase
+        .from('student_enrollment')
+        .select('enrollment_id')
+        .eq('student_id', studentId)
+        .eq('session_id', sessionId);
+      if (enrollmentsError || !enrollments || enrollments.length === 0) {
+        return NextResponse.json({ success: false, message: 'No enrollments found for this session' }, { status: 404 });
+      }
+      enrollmentIds = enrollments.map(e => e.enrollment_id);
+    } else {
+      // Last-resort fallback: all enrollments for the student
+      const { data: enrollments } = await supabase
+        .from('student_enrollment')
+        .select('enrollment_id')
+        .eq('student_id', studentId);
+      if (!enrollments || enrollments.length === 0) {
+        return NextResponse.json({ success: false, message: 'No enrollments found' }, { status: 404 });
+      }
+      enrollmentIds = enrollments.map(e => e.enrollment_id);
     }
-    const enrollmentIds = enrollments.map(e => e.enrollment_id);
 
     // Get all test marks for the student
     let testMarkQuery = supabase

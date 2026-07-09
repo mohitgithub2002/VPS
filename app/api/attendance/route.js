@@ -3,6 +3,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateUser, unauthorized } from '@/lib/auth';
+import { getActiveSession } from '@/utils/sessionHelper';
 
 // Helper: month names
 const MONTH_NAMES = [
@@ -66,21 +67,73 @@ export async function GET(req) {
       );
     }
 
-    // Build date range
+    // Build date range for the requested month
     const monthPadded = month.toString().padStart(2, '0');
     const startDate = `${year}-${monthPadded}-01`;
     const endDay = new Date(year, month, 0).getDate(); // JS month arg is 1-based for this formula
     const endDate = `${year}-${monthPadded}-${endDay.toString().padStart(2, '0')}`;
 
-    // ---------- FETCH STUDENT INFO ----------
+    // ---------- RESOLVE CURRENT-SESSION ENROLLMENT ----------
+    // Priority 1: enrollmentId embedded in JWT (fastest, no extra query)
+    // Priority 2: look up enrollment for the active session from DB
+    let enrollment;
+    let currentSession;
+
+    if (auth.user.enrollmentId) {
+      // Fetch the enrollment row directly by ID to get classroom info
+      const { data: enrollmentData, error: enrollmentError } = await supabase
+        .from('student_enrollment')
+        .select(`
+          enrollment_id,
+          roll_no,
+          session_id,
+          classrooms!inner(classroom_id, class, section)
+        `)
+        .eq('enrollment_id', auth.user.enrollmentId)
+        .single();
+
+      if (enrollmentError || !enrollmentData) {
+        return NextResponse.json({ success: false, message: 'Enrollment not found for student', error: 'NOT_FOUND' }, { status: 404 });
+      }
+      enrollment = enrollmentData;
+
+      // Fetch the session for this enrollment to get actual dates
+      const { data: sessionData } = await supabase
+        .from('sessions')
+        .select('session_id, session_name, start_date, end_date')
+        .eq('session_id', enrollmentData.session_id)
+        .maybeSingle();
+      currentSession = sessionData;
+    } else {
+      // Fallback: resolve active session, then find matching enrollment
+      currentSession = await getActiveSession();
+
+      if (!currentSession) {
+        return NextResponse.json({ success: false, message: 'No active session found', error: 'NOT_FOUND' }, { status: 404 });
+      }
+
+      const { data: enrollmentData, error: enrollmentError } = await supabase
+        .from('student_enrollment')
+        .select(`
+          enrollment_id,
+          roll_no,
+          session_id,
+          classrooms!inner(classroom_id, class, section)
+        `)
+        .eq('student_id', studentId)
+        .eq('session_id', currentSession.session_id)
+        .maybeSingle();
+
+      if (enrollmentError || !enrollmentData) {
+        return NextResponse.json({ success: false, message: 'Enrollment not found for student in active session', error: 'NOT_FOUND' }, { status: 404 });
+      }
+      enrollment = enrollmentData;
+    }
+
+    // Fetch student name separately (not tied to enrollment fetch)
     const { data: studentData, error: studentError } = await supabase
       .from('students')
-      .select(`student_id, name,
-               student_enrollment!inner(
-                 enrollment_id,
-                 roll_no,
-                 classrooms!inner(classroom_id, class, section)
-               )`)
+      .select('student_id, name')
       .eq('student_id', studentId)
       .single();
 
@@ -90,12 +143,6 @@ export async function GET(req) {
       }
       throw studentError;
     }
-
-    const enrollment = studentData.student_enrollment?.[0];
-    if (!enrollment) {
-      return NextResponse.json({ success: false, message: 'Enrollment not found for student', error: 'NOT_FOUND' }, { status: 404 });
-    }
-
     // ---------- ATTENDANCE & HOLIDAY QUERIES IN PARALLEL ----------
     const attendancePromise = supabase
       .from('attendance')
@@ -193,16 +240,23 @@ export async function GET(req) {
     }
 
     // ---------------------- SESSION-WIDE SUMMARY ----------------------
-    // Determine academic session window (1 Apr YYYY → 31 Mar YYYY+1)
+    // Use the actual session start_date / end_date from the sessions table.
+    // Cap the end date at today so future days aren't counted.
     const todayDate = new Date();
-    const sessionYear = (todayDate.getMonth() + 1) >= 4 ? todayDate.getFullYear() : todayDate.getFullYear() - 1;
-    const sessionStartDateObj = new Date(`${sessionYear}-04-01`);
-    const sessionEndFullObj  = new Date(`${sessionYear + 1}-03-31`);
-    const sessionEndDateObj  = todayDate < sessionEndFullObj ? todayDate : sessionEndFullObj;
+
+    const sessionStartDateObj = currentSession?.start_date
+      ? new Date(currentSession.start_date)
+      : new Date(`${todayDate.getFullYear()}-04-01`); // safe fallback
+
+    const sessionEndFullObj = currentSession?.end_date
+      ? new Date(currentSession.end_date)
+      : new Date(`${todayDate.getFullYear() + 1}-03-31`);
+
+    // Don't count future days in the summary
+    const sessionEndDateObj = todayDate < sessionEndFullObj ? todayDate : sessionEndFullObj;
 
     const sessionStartISO = sessionStartDateObj.toISOString().split('T')[0];
-    const sessionEndISO   = sessionEndDateObj.toISOString().split('T')[0];
-
+    const sessionEndISO = sessionEndDateObj.toISOString().split('T')[0];
     // Fetch all attendance records within the session window
     const { data: sessionAttendance, error: sessionAttErr } = await supabase
       .from('attendance')
@@ -243,13 +297,13 @@ export async function GET(req) {
         const st = sessionAttMap.get(iso);
         if (st === 'present') sPresent++;
         else if (st === 'absent') sAbsent++;
-        else if (st === 'leave')  sLeave++;
+        else if (st === 'leave') sLeave++;
       } else if (dow === 0 || sessionHolSet.has(iso)) {
         sHoliday++;
       }
     }
 
-    const sessionWorkingDays = sPresent + sAbsent + sLeave; // as requested
+    const sessionWorkingDays = sPresent + sAbsent + sLeave;
     const sessionAttendancePercentage = sessionWorkingDays > 0
       ? parseFloat(((sPresent / sessionWorkingDays) * 100).toFixed(2))
       : 0;
@@ -270,6 +324,7 @@ export async function GET(req) {
       },
       attendance: attendanceArray,
       summary: {
+        sessionName: currentSession?.session_name || null,
         sessionStart: sessionStartISO,
         sessionEnd: sessionEndISO,
         totalWorkingDays: sessionWorkingDays,
