@@ -7,31 +7,9 @@
 import { supabase } from "@/utils/supabaseClient";
 import { NextResponse } from "next/server";
 import { authenticateAdmin, unauthorized } from '@/lib/auth';
+import { getActiveSession } from '@/utils/sessionHelper';
 
-/**
- * Helper function to get the latest session from the sessions table
- * @returns {Promise<Object|null>} Latest session data or null if no sessions exist
- */
-async function getLatestSession() {
-    try {
-        const { data: latestSession, error } = await supabase
-            .from('sessions')
-            .select('session_id, session_name, start_date, end_date')
-            .order('start_date', { ascending: false })
-            .limit(1)
-            .single();
 
-        if (error) {
-            console.error('Error fetching latest session:', error);
-            return null;
-        }
-
-        return latestSession;
-    } catch (error) {
-        console.error('Error in getLatestSession:', error);
-        return null;
-    }
-}
 
 /**
  * GET endpoint to retrieve all holidays with optional filtering
@@ -194,8 +172,8 @@ export async function POST(req) {
             );
         }
 
-        // Get the latest session automatically
-        const latestSession = await getLatestSession();
+        // Get the active session automatically
+        const latestSession = await getActiveSession();
         if (!latestSession) {
             return NextResponse.json(
                 { error: 'No active session found. Please create a session first.' },

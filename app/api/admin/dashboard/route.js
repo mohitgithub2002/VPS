@@ -56,6 +56,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateAdmin, unauthorized } from '@/lib/auth';
+import { getActiveSessionId } from '@/utils/sessionHelper';
 
 export async function GET(req) {
   // Authenticate the incoming request
@@ -72,6 +73,9 @@ export async function GET(req) {
   const announcementsLimit = parseInt(searchParams.get('announcements_limit') || '5'); // Default to 5 announcements
   
   try {
+    // Get the active session ID for scoping queries
+    const activeSessionId = await getActiveSessionId();
+
     // Execute multiple queries in parallel for optimal performance
     const [
       studentsCountResponse,
@@ -82,22 +86,33 @@ export async function GET(req) {
       announcementsResponse,
       upcomingEventsResponse
     ] = await Promise.all([
-      // Count total students
-      supabase
-        .from('students')
-        .select('student_id', { count: 'exact', head: true })
-        .eq('status', 'Active'),
+      // Count students enrolled in the active session
+      activeSessionId
+        ? supabase
+            .from('student_enrollment')
+            .select('enrollment_id', { count: 'exact', head: true })
+            .eq('session_id', activeSessionId)
+        : supabase
+            .from('students')
+            .select('student_id', { count: 'exact', head: true })
+            .eq('status', 'Active'),
 
       // Count total teachers
       supabase
         .from('teachers')
         .select('teacher_id', { count: 'exact', head: true }),
 
-      // Get today's attendance summary
-      supabase
-        .from('attendance')
-        .select('status')
-        .eq('date', date),
+      // Get today's attendance summary — scoped to active session classrooms
+      activeSessionId
+        ? supabase
+            .from('attendance')
+            .select('status, classroom_id, classrooms!inner(session_id)')
+            .eq('date', date)
+            .eq('classrooms.session_id', activeSessionId)
+        : supabase
+            .from('attendance')
+            .select('status')
+            .eq('date', date),
 
       // Get class-wise attendance overview
       supabase.rpc('get_class_attendance_summary'),

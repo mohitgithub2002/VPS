@@ -8,6 +8,7 @@ import { supabase } from "@/utils/supabaseClient";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { authenticateAdmin, unauthorized } from '@/lib/auth';
+import { getActiveSessionId } from '@/utils/sessionHelper';
 
 /**
  * POST endpoint to create a new student
@@ -398,11 +399,16 @@ export async function GET(req) {
         const className = searchParams.get('class') || searchParams.get('className');
         const section = searchParams.get('section');
         const rollNo = searchParams.get('rollNo');
-        const sessionId = searchParams.get('sessionId');
         const medium = searchParams.get('medium');
         const search = searchParams.get('search');
         const page = parseInt(searchParams.get('page') || '1');
         const limit = parseInt(searchParams.get('limit') || '50');
+
+        // Resolve session: use provided sessionId, or auto-resolve to active session
+        let sessionId = searchParams.get('sessionId');
+        if (!sessionId) {
+            sessionId = await getActiveSessionId();
+        }
 
         let result;
 

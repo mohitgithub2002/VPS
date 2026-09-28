@@ -32,17 +32,34 @@ export async function GET(req) {
       return NextResponse.json({ success: false, message: 'No enrollments found' }, { status: 404 });
     }
 
-    // 2. Pick the latest enrollment, or the one matching the year/session
-    let enrollment = enrollments[0];
+    // 2. Pick the enrollment matching the requested session, or the one from JWT
+    let enrollment = enrollments[0]; // Default to latest
     if (year) {
-      // Find session_id for the given year
-      // Assume year is the start year of the session
-      const sessionIdForYear = enrollments.find(e => {
-        // You may want to join sessions table for more robust year matching
-        return String(e.session_id) === String(year);
-      });
-      if (sessionIdForYear) enrollment = sessionIdForYear;
+      // First try matching by session_id directly
+      let matchedEnrollment = enrollments.find(e => String(e.session_id) === String(year));
+      
+      // If no match, try matching by session_name (e.g., '2024-25')
+      if (!matchedEnrollment) {
+        const sessionIds = enrollments.map(e => e.session_id);
+        const { data: sessions } = await supabase
+          .from('sessions')
+          .select('session_id, session_name')
+          .in('session_id', sessionIds);
+        
+        const matchingSession = (sessions || []).find(s => 
+          s.session_name === year || s.session_name.startsWith(year)
+        );
+        if (matchingSession) {
+          matchedEnrollment = enrollments.find(e => e.session_id === matchingSession.session_id);
+        }
+      }
+      
+      if (matchedEnrollment) enrollment = matchedEnrollment;
       else return NextResponse.json({ success: true, data: [] });
+    } else if (auth.user.enrollmentId) {
+      // Use enrollment from JWT if no year specified
+      const jwtEnrollment = enrollments.find(e => e.enrollment_id === auth.user.enrollmentId);
+      if (jwtEnrollment) enrollment = jwtEnrollment;
     }
     const enrollmentId = enrollment.enrollment_id;
     const sessionId = enrollment.session_id;

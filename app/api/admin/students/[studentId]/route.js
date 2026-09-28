@@ -33,6 +33,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateAdmin, unauthorized } from '@/lib/auth';
+import { resolveSessionId } from '@/utils/sessionHelper';
 
 /**
  * GET handler for student details endpoint
@@ -110,7 +111,15 @@ export async function GET(req, { params }) {
     }
     
     // Get additional data in parallel for the student
-    const enrollment = student.student_enrollment?.[0] || {};
+    // Resolve which session's enrollment to show
+    const { searchParams } = new URL(req.url);
+    const requestedSessionId = searchParams.get('sessionId');
+    const { sessionId: resolvedSessionId } = await resolveSessionId(requestedSessionId);
+
+    // Find the enrollment for the resolved session, fallback to first enrollment
+    let enrollment = (student.student_enrollment || []).find(
+      e => e.session_id === resolvedSessionId
+    ) || student.student_enrollment?.[0] || {};
     const classroom = enrollment.classrooms || {};
     const sessionId = enrollment.session_id;
     const classroomId = classroom.classroom_id;

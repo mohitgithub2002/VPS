@@ -66,7 +66,26 @@ export async function POST(req) {
       );
     }
 
-    // Get enrollments for all students in a separate query
+    // Get the active session to prioritize the correct enrollment
+    const { data: activeSession } = await supabase
+      .from('sessions')
+      .select('session_id, session_name')
+      .eq('is_active', true)
+      .maybeSingle();
+
+    // Fallback to latest session if no active session flag
+    let activeSessionId = activeSession?.session_id;
+    if (!activeSessionId) {
+      const { data: fallback } = await supabase
+        .from('sessions')
+        .select('session_id, session_name')
+        .order('start_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      activeSessionId = fallback?.session_id;
+    }
+
+    // Get enrollments for all students with session info
     const { data: enrollments, error: enrollmentsError } = await supabase
       .from('student_enrollment')
       .select(`
@@ -74,15 +93,20 @@ export async function POST(req) {
         student_id,
         roll_no,
         classroom_id,
+        session_id,
         classrooms (
           classroom_id,
           class,
           section,
           medium
+        ),
+        sessions (
+          session_id,
+          session_name
         )
       `)
       .in('student_id', students.map(s => s.student_id))
-      .order('created_at', { ascending: false });
+      .order('session_id', { ascending: false });
 
     if (enrollmentsError) {
       console.error('Error fetching enrollments:', enrollmentsError);
@@ -92,10 +116,16 @@ export async function POST(req) {
       );
     }
 
-    // Create a map of student_id to their latest enrollment
+    // Create a map of student_id to their enrollment for the active session
+    // Fallback to latest enrollment if no active session enrollment exists
     const enrollmentMap = new Map();
     enrollments?.forEach(enrollment => {
-      if (!enrollmentMap.has(enrollment.student_id)) {
+      const existing = enrollmentMap.get(enrollment.student_id);
+      if (!existing) {
+        // First enrollment found (latest by session_id desc)
+        enrollmentMap.set(enrollment.student_id, enrollment);
+      } else if (enrollment.session_id === activeSessionId && existing.session_id !== activeSessionId) {
+        // Prefer active session enrollment over any other
         enrollmentMap.set(enrollment.student_id, enrollment);
       }
     });
@@ -104,6 +134,7 @@ export async function POST(req) {
     const profiles = students.map(student => {
       const enrollment = enrollmentMap.get(student.student_id);
       const classroom = enrollment?.classrooms;
+      const session = enrollment?.sessions;
 
       // Base user object with common information
       const userInfo = {
@@ -113,7 +144,9 @@ export async function POST(req) {
         rollNo: enrollment?.roll_no || null,
         class: classroom?.class || null,
         section: classroom?.section || null,
-        medium: classroom?.medium || null
+        medium: classroom?.medium || null,
+        sessionId: session?.session_id || null,
+        sessionName: session?.session_name || null
       };
 
       // If student is active and has enrollment, include token and full access
@@ -123,6 +156,7 @@ export async function POST(req) {
           studentId: student.student_id,
           enrollmentId: enrollment.enrollment_id,
           classId: classroom.classroom_id,
+          sessionId: enrollment.session_id,
           name: student.name
         });
 
@@ -147,7 +181,8 @@ export async function POST(req) {
       status: 'success',
       message: 'Login successful',
       data: {
-        profiles
+        profiles,
+        activeSession: activeSession || null
       }
     });
   } catch (error) {

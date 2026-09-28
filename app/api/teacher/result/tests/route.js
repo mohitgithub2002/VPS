@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/utils/supabaseClient';
 import { authenticateUser, unauthorized } from '@/lib/auth';
+import { getActiveSessionId } from '@/utils/sessionHelper';
 
 function determineStatus(test, marksCount) {
   const today = new Date().toISOString().split('T')[0];
@@ -149,12 +150,21 @@ export async function POST(req) {
       .maybeSingle();
     if (!tc) return NextResponse.json({ success: false, message: 'You are not assigned to this class' }, { status: 403 });
 
+    // Resolve session_id from the classroom
+    const { data: classroom, error: clsErr } = await supabase
+      .from('classrooms')
+      .select('session_id')
+      .eq('classroom_id', classId)
+      .maybeSingle();
+
+    const sessionId = classroom?.session_id || await getActiveSessionId();
+
     // Insert test
     const { data: inserted, error: insErr } = await supabase
       .from('daily_test')
       .insert({
         classroom_id: classId,
-        session_id: null,
+        session_id: sessionId,
         subject_id: subject,
         name: title,
         test_date: date,

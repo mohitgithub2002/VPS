@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from "@/utils/supabaseClient";
 import { authenticateAdmin, unauthorized } from '@/lib/auth';
+import { getActiveSession } from '@/utils/sessionHelper';
 
 // Helper function to format response
 const formatResponse = (data, success = true) => {
@@ -12,7 +13,7 @@ const formatResponse = (data, success = true) => {
 };
 
 // Helper function to format error response
-const formatError = (code, message) => {
+const formatError = (code, message, status = 400) => {
   return NextResponse.json({
     success: false,
     error: {
@@ -20,7 +21,7 @@ const formatError = (code, message) => {
       message,
     },
     timestamp: new Date().toISOString(),
-  }, { status: 400 });
+  }, { status });
 };
 
 // Custom sorting function for classes
@@ -66,22 +67,20 @@ export async function GET(request) {
       .from('classrooms')
       .select(`
         classroom_id,
+        session_id,
         class,
         section,
-        medium
+        medium,
+        total_student,
+        created_at
       `);
 
-    // If session_id is not provided, get the latest session
+    // If session_id is not provided, get the active session
     if (!sessionId) {
-      const { data: latestSession } = await supabase
-        .from('sessions')
-        .select('session_id')
-        .order('start_date', { ascending: false })
-        .limit(1)
-        .single();
+      const activeSession = await getActiveSession();
 
-      if (latestSession) {
-        query = query.eq('session_id', latestSession.session_id);
+      if (activeSession) {
+        query = query.eq('session_id', activeSession.session_id);
       }
     } else {
       query = query.eq('session_id', sessionId);
@@ -102,12 +101,144 @@ export async function GET(request) {
     return formatResponse({
       classes: sortedClasses.map(cls => ({
         classroom_id: cls.classroom_id,
+        session_id: cls.session_id,
         class: cls.class,
         section: cls.section,
-        medium: cls.medium
+        medium: cls.medium,
+        total_student: cls.total_student ?? 0,
+        created_at: cls.created_at,
       }))
     });
   } catch (error) {
-    return formatError('INTERNAL_ERROR', 'Failed to fetch classes');
+    return formatError('INTERNAL_ERROR', 'Failed to fetch classes', 500);
+  }
+}
+
+// POST /api/admin/classes - Create a new classroom
+export async function POST(request) {
+  const auth = await authenticateAdmin(request);
+  if (!auth.authenticated) return unauthorized();
+
+  try {
+    const body = await request.json();
+    const { session_id, class: className, section, medium } = body;
+
+    if (!session_id) return formatError('VALIDATION_ERROR', 'session_id is required');
+    if (!className) return formatError('VALIDATION_ERROR', 'class is required');
+    if (!section) return formatError('VALIDATION_ERROR', 'section is required');
+    if (!medium) return formatError('VALIDATION_ERROR', 'medium is required');
+
+    const { data, error } = await supabase
+      .from('classrooms')
+      .insert({
+        session_id: Number(session_id),
+        class: className.trim(),
+        section: section.trim(),
+        medium: medium.trim(),
+      })
+      .select('classroom_id, session_id, class, section, medium, total_student, created_at')
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return formatError('DUPLICATE_CLASSROOM', 'A classroom with this class, section, and medium already exists for the selected session');
+      }
+      if (error.code === '23503') {
+        return formatError('INVALID_SESSION', 'The specified session does not exist');
+      }
+      throw error;
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: { classroom: data },
+      message: 'Classroom created successfully',
+      timestamp: new Date().toISOString(),
+    }, { status: 201 });
+  } catch (error) {
+    console.error('POST /api/admin/classes error:', error);
+    return formatError('INTERNAL_ERROR', 'Failed to create classroom', 500);
+  }
+}
+
+// PUT /api/admin/classes - Update an existing classroom
+export async function PUT(request) {
+  const auth = await authenticateAdmin(request);
+  if (!auth.authenticated) return unauthorized();
+
+  try {
+    const body = await request.json();
+    const { classroom_id, class: className, section, medium } = body;
+
+    if (!classroom_id) return formatError('VALIDATION_ERROR', 'classroom_id is required');
+
+    const updates = {};
+    if (className !== undefined) updates.class = className.trim();
+    if (section !== undefined) updates.section = section.trim();
+    if (medium !== undefined) updates.medium = medium.trim();
+
+    if (Object.keys(updates).length === 0) {
+      return formatError('VALIDATION_ERROR', 'No fields to update');
+    }
+
+    const { data, error } = await supabase
+      .from('classrooms')
+      .update(updates)
+      .eq('classroom_id', Number(classroom_id))
+      .select('classroom_id, session_id, class, section, medium, total_student, created_at')
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return formatError('DUPLICATE_CLASSROOM', 'A classroom with this class, section, and medium already exists for the selected session');
+      }
+      throw error;
+    }
+
+    if (!data) return formatError('NOT_FOUND', 'Classroom not found', 404);
+
+    return NextResponse.json({
+      success: true,
+      data: { classroom: data },
+      message: 'Classroom updated successfully',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('PUT /api/admin/classes error:', error);
+    return formatError('INTERNAL_ERROR', 'Failed to update classroom', 500);
+  }
+}
+
+// DELETE /api/admin/classes?classroom_id=X - Delete a classroom
+export async function DELETE(request) {
+  const auth = await authenticateAdmin(request);
+  if (!auth.authenticated) return unauthorized();
+
+  try {
+    const { searchParams } = new URL(request.url);
+    const classroomId = searchParams.get('classroom_id');
+
+    if (!classroomId) return formatError('VALIDATION_ERROR', 'classroom_id query param is required');
+
+    const { error } = await supabase
+      .from('classrooms')
+      .delete()
+      .eq('classroom_id', Number(classroomId));
+
+    if (error) {
+      if (error.code === '23503') {
+        return formatError('HAS_DEPENDENCIES', 'Cannot delete this classroom because it has associated data (students, teachers, etc.)');
+      }
+      throw error;
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Classroom deleted successfully',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('DELETE /api/admin/classes error:', error);
+    return formatError('INTERNAL_ERROR', 'Failed to delete classroom', 500);
   }
 }

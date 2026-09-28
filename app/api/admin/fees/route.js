@@ -1,6 +1,7 @@
 import { supabase } from "@/utils/supabaseClient";
 import { authenticateAdmin, unauthorized } from "@/lib/auth";
 import { NextResponse } from "next/server";
+import { getActiveSessionId } from '@/utils/sessionHelper';
 
 /**
  * GET /api/admin/student-fees
@@ -41,6 +42,12 @@ export async function GET(req) {
 
     if (classroomId) {
       enrollmentQuery = enrollmentQuery.eq("classrooms.classroom_id", classroomId);
+    } else {
+      // Scope to active session when no classroom filter
+      const activeSessionId = await getActiveSessionId();
+      if (activeSessionId) {
+        enrollmentQuery = enrollmentQuery.eq("session_id", activeSessionId);
+      }
     }
 
     const { data: enrollments, error: enrollErr } = await enrollmentQuery;
